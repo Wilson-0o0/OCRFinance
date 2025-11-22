@@ -7,6 +7,7 @@ import Chart from 'chart.js/auto';
 let currentView = 'dashboard';
 let categories = ['Food', 'Transport', 'Utilities', 'Entertainment', 'Health', 'Salary', 'Transfer', 'Uncategorized'];
 let accounts = ['Cash', 'Bank Account', 'Credit Card'];
+let openingBalances = {}; // { "AccountName": 1000.00 }
 
 const loadSettings = () => {
     const savedCats = localStorage.getItem('ocr_categories');
@@ -14,11 +15,15 @@ const loadSettings = () => {
 
     const savedAccs = localStorage.getItem('ocr_accounts');
     if (savedAccs) accounts = JSON.parse(savedAccs);
+
+    const savedBalances = localStorage.getItem('ocr_opening_balances');
+    if (savedBalances) openingBalances = JSON.parse(savedBalances);
 };
 
 const saveSettings = () => {
     localStorage.setItem('ocr_categories', JSON.stringify(categories));
     localStorage.setItem('ocr_accounts', JSON.stringify(accounts));
+    localStorage.setItem('ocr_opening_balances', JSON.stringify(openingBalances));
 };
 
 // DOM Elements
@@ -32,6 +37,8 @@ export const renderApp = async () => {
         <button id="nav-dashboard" class="active">Dashboard</button>
         <button id="nav-upload">Upload & Scan</button>
         <button id="nav-transactions">Transactions</button>
+        <button id="nav-accounts">Accounts</button>
+        <button id="nav-settings">Settings</button>
       </nav>
     </aside>
     <main id="main-content">
@@ -45,7 +52,7 @@ export const renderApp = async () => {
 };
 
 const setupNavigation = () => {
-    const navs = ['dashboard', 'upload', 'transactions'];
+    const navs = ['dashboard', 'upload', 'transactions', 'accounts', 'settings'];
     navs.forEach(view => {
         document.getElementById(`nav-${view}`).addEventListener('click', () => {
             currentView = view;
@@ -74,74 +81,97 @@ const renderView = async () => {
         case 'transactions':
             await renderTransactions();
             break;
+        case 'accounts':
+            await renderAccounts();
+            break;
+        case 'settings':
+            renderSettings();
+            break;
     }
 };
 
 // --- Dashboard ---
 const renderDashboard = async () => {
     const transactions = await getAllTransactions();
-
-    const income = transactions.filter(t => t.type === 'Income').reduce((sum, t) => sum + t.amount, 0);
-    const expense = transactions.filter(t => t.type === 'Expense').reduce((sum, t) => sum + t.amount, 0);
-    const balance = income - expense;
-
     const main = document.getElementById('main-content');
-    main.innerHTML = `
-    <header>
-      <h1>Dashboard</h1>
-    </header>
-    <div class="grid-cols-3">
-      <div class="card">
-        <h3>Net Balance</h3>
-        <p style="font-size: 2rem; font-weight: bold; color: ${balance >= 0 ? '#10b981' : '#ef4444'}">$${balance.toFixed(2)}</p>
-      </div>
-      <div class="card">
-        <h3>Total Income</h3>
-        <p style="font-size: 1.5rem; font-weight: bold; color: #10b981">$${income.toFixed(2)}</p>
-      </div>
-      <div class="card">
-        <h3>Total Expenses</h3>
-        <p style="font-size: 1.5rem; font-weight: bold; color: #ef4444">$${expense.toFixed(2)}</p>
-      </div>
-    </div>
-    <div class="card">
-      <canvas id="spendingChart"></canvas>
-    </div>
-  `;
 
-    renderChart(transactions.filter(t => t.type === 'Expense'));
-};
+    // Calculate totals
+    let totalIncome = 0;
+    let totalExpense = 0;
+    const categoryExpenses = {};
 
-const renderChart = (transactions) => {
-    const ctx = document.getElementById('spendingChart');
-    if (!ctx) return;
-
-    // Group by date (simple)
-    const dataMap = {};
     transactions.forEach(t => {
-        const date = t.date; // Assuming YYYY-MM-DD or similar
-        dataMap[date] = (dataMap[date] || 0) + t.amount;
+        if (t.type === 'Income') {
+            totalIncome += t.amount;
+        } else if (t.type === 'Expense') {
+            totalExpense += t.amount;
+            // Category breakdown
+            const cat = t.category || 'Uncategorized';
+            categoryExpenses[cat] = (categoryExpenses[cat] || 0) + t.amount;
+        }
     });
 
+    // Calculate Opening Balance Total
+    let totalOpening = 0;
+    Object.values(openingBalances).forEach(val => totalOpening += (parseFloat(val) || 0));
+
+    const netBalance = totalOpening + totalIncome - totalExpense;
+
+    main.innerHTML = `
+        <header>
+            <h1>Dashboard</h1>
+        </header>
+        <div class="dashboard-grid">
+            <div class="card">
+                <h3>Net Balance</h3>
+                <p class="amount ${netBalance >= 0 ? 'positive' : 'negative'}">$${netBalance.toFixed(2)}</p>
+                <small>Includes Opening Balances: $${totalOpening.toFixed(2)}</small>
+            </div>
+            <div class="card">
+                <h3>Total Income</h3>
+                <p class="amount positive">$${totalIncome.toFixed(2)}</p>
+            </div>
+            <div class="card">
+                <h3>Total Expenses</h3>
+                <p class="amount negative">$${totalExpense.toFixed(2)}</p>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top: 2rem;">
+            <h3>Expenses by Category</h3>
+            <div style="height: 300px; position: relative;">
+                <canvas id="expense-chart"></canvas>
+            </div>
+        </div>
+    `;
+
+    renderCategoryChart(categoryExpenses);
+};
+
+const renderCategoryChart = (data) => {
+    const ctx = document.getElementById('expense-chart').getContext('2d');
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+
     new Chart(ctx, {
-        type: 'bar',
+        type: 'doughnut',
         data: {
-            labels: Object.keys(dataMap),
+            labels: labels,
             datasets: [{
-                label: 'Daily Spending',
-                data: Object.values(dataMap),
-                backgroundColor: '#3b82f6',
-                borderRadius: 4
+                data: values,
+                backgroundColor: [
+                    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'
+                ],
+                borderWidth: 0
             }]
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             plugins: {
-                legend: { display: false }
-            },
-            scales: {
-                y: { beginAtZero: true, grid: { color: '#333' } },
-                x: { grid: { display: false } }
+                legend: {
+                    position: 'right'
+                }
             }
         }
     });
@@ -506,10 +536,50 @@ const renderTransactions = async () => {
     const transactions = await getAllTransactions();
     const main = document.getElementById('main-content');
 
+    const accountOptions = accounts.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+    const categoryOptions = categories.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+
     let html = `
-    <header>
+    <header style="display: flex; justify-content: space-between; align-items: center;">
         <h1>All Transactions</h1>
+        <button id="btn-show-add-tx" class="btn">Add Transaction</button>
     </header>
+
+    <!-- Manual Input Form -->
+    <div id="manual-tx-form" class="card hidden" style="margin-bottom: 1rem; border: 1px solid #3b82f6;">
+        <h3>Add New Transaction</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <label>Date: <input type="date" id="new-date" value="${new Date().toISOString().split('T')[0]}"></label>
+            <label>Merchant/Description: <input type="text" id="new-merchant" placeholder="e.g. Grocery Store"></label>
+            
+            <label>Type: 
+                <select id="new-type" onchange="toggleNewTxFields()">
+                    <option value="Expense">Expense</option>
+                    <option value="Income">Income</option>
+                    <option value="Transfer">Transfer</option>
+                </select>
+            </label>
+            
+            <label>Amount: <input type="number" step="0.01" id="new-amount" placeholder="0.00"></label>
+            
+            <label id="lbl-new-account">Account: 
+                <select id="new-account">${accountOptions}</select>
+            </label>
+            
+            <label id="lbl-new-to-account" style="display: none;">To Account: 
+                <select id="new-to-account">${accountOptions}</select>
+            </label>
+
+            <label>Category: 
+                <select id="new-category">${categoryOptions}</select>
+            </label>
+        </div>
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+            <button id="btn-save-tx" class="btn">Save Transaction</button>
+            <button id="btn-cancel-tx" class="btn-secondary">Cancel</button>
+        </div>
+    </div>
+
     <div class="card">
         <table>
             <thead>
@@ -529,6 +599,9 @@ const renderTransactions = async () => {
     if (transactions.length === 0) {
         html += '<tr><td colspan="7" style="text-align: center;">No transactions found.</td></tr>';
     } else {
+        // Sort by date desc
+        transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
         transactions.forEach(t => {
             let accountDisplay = t.accountId || '-';
             if (t.type === 'Transfer' && t.toAccountId) {
@@ -559,10 +632,205 @@ const renderTransactions = async () => {
 
     main.innerHTML = html;
 
+    // Handlers
+    const form = document.getElementById('manual-tx-form');
+
+    document.getElementById('btn-show-add-tx').onclick = () => {
+        form.classList.remove('hidden');
+    };
+
+    document.getElementById('btn-cancel-tx').onclick = () => {
+        form.classList.add('hidden');
+    };
+
+    window.toggleNewTxFields = () => {
+        const type = document.getElementById('new-type').value;
+        const isTransfer = type === 'Transfer';
+        document.getElementById('lbl-new-to-account').style.display = isTransfer ? 'block' : 'none';
+        document.getElementById('lbl-new-account').childNodes[0].textContent = isTransfer ? 'From Account: ' : 'Account: ';
+    };
+
+    document.getElementById('btn-save-tx').onclick = async () => {
+        const date = document.getElementById('new-date').value;
+        const merchant = document.getElementById('new-merchant').value;
+        const type = document.getElementById('new-type').value;
+        const amount = parseFloat(document.getElementById('new-amount').value);
+        const accountId = document.getElementById('new-account').value;
+        const category = document.getElementById('new-category').value;
+
+        let toAccountId = null;
+        if (type === 'Transfer') {
+            toAccountId = document.getElementById('new-to-account').value;
+        }
+
+        if (!merchant || isNaN(amount)) {
+            alert('Please fill in Merchant and Amount.');
+            return;
+        }
+
+        await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category });
+        renderTransactions();
+    };
+
     window.deleteTx = async (id) => {
         if (confirm('Are you sure?')) {
             await deleteTransaction(id);
             renderTransactions();
+        }
+    };
+};
+
+// --- Accounts View ---
+const renderAccounts = async () => {
+    const transactions = await getAllTransactions();
+    const main = document.getElementById('main-content');
+
+    // Calculate Net Movement per account
+    const movements = {};
+    accounts.forEach(acc => movements[acc] = 0);
+
+    transactions.forEach(t => {
+        if (t.type === 'Income' && t.accountId) {
+            movements[t.accountId] = (movements[t.accountId] || 0) + t.amount;
+        } else if (t.type === 'Expense' && t.accountId) {
+            movements[t.accountId] = (movements[t.accountId] || 0) - t.amount;
+        } else if (t.type === 'Transfer') {
+            if (t.accountId) movements[t.accountId] = (movements[t.accountId] || 0) - t.amount;
+            if (t.toAccountId) movements[t.toAccountId] = (movements[t.toAccountId] || 0) + t.amount;
+        }
+    });
+
+    let html = `
+    <header>
+        <h1>Accounts</h1>
+    </header>
+    <div class="card">
+        <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+            <input type="text" id="new-account-name" placeholder="New Account Name" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+            <button id="btn-add-account" class="btn">Add Account</button>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Account Name</th>
+                    <th>Opening Balance</th>
+                    <th>Net Movement</th>
+                    <th>Current Balance</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    accounts.forEach(acc => {
+        const opening = parseFloat(openingBalances[acc] || 0);
+        const movement = movements[acc] || 0;
+        const current = opening + movement;
+
+        html += `
+        <tr>
+            <td>${acc}</td>
+            <td>
+                <input type="number" step="0.01" value="${opening}" 
+                    onchange="updateOpeningBalance('${acc}', this.value)"
+                    style="width: 100px; padding: 0.25rem;">
+            </td>
+            <td style="color: ${movement >= 0 ? '#10b981' : '#ef4444'}">
+                ${movement >= 0 ? '+' : ''}$${movement.toFixed(2)}
+            </td>
+            <td style="font-weight: bold;">$${current.toFixed(2)}</td>
+            <td>
+                <button class="btn-secondary" onclick="deleteAccount('${acc}')" style="color: #ef4444; border-color: #ef4444;">Delete</button>
+            </td>
+        </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    </div>
+    `;
+
+    main.innerHTML = html;
+
+    // Handlers
+    document.getElementById('btn-add-account').onclick = () => {
+        const name = document.getElementById('new-account-name').value.trim();
+        if (name && !accounts.includes(name)) {
+            accounts.push(name);
+            saveSettings();
+            renderAccounts();
+        } else if (accounts.includes(name)) {
+            alert('Account already exists!');
+        }
+    };
+
+    window.updateOpeningBalance = (acc, val) => {
+        openingBalances[acc] = parseFloat(val);
+        saveSettings();
+        renderAccounts(); // Re-render to update Current Balance
+    };
+
+    window.deleteAccount = (acc) => {
+        if (confirm(`Delete account "${acc}"? Transactions will remain but may show unknown account.`)) {
+            accounts = accounts.filter(a => a !== acc);
+            delete openingBalances[acc];
+            saveSettings();
+            renderAccounts();
+        }
+    };
+};
+
+// --- Settings View ---
+const renderSettings = () => {
+    const main = document.getElementById('main-content');
+
+    let html = `
+    <header>
+        <h1>Settings</h1>
+    </header>
+    <div class="card">
+        <h3>Manage Categories</h3>
+        <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
+            <input type="text" id="new-category-name" placeholder="New Category Name" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+            <button id="btn-add-category" class="btn">Add Category</button>
+        </div>
+        <ul style="list-style: none; padding: 0;">
+    `;
+
+    categories.forEach(cat => {
+        html += `
+        <li style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee;">
+            <span>${cat}</span>
+            <button class="btn-secondary" onclick="deleteCategory('${cat}')" style="color: #ef4444; border-color: #ef4444; padding: 0.25rem 0.5rem; font-size: 0.8rem;">Delete</button>
+        </li>
+        `;
+    });
+
+    html += `
+        </ul>
+    </div>
+    `;
+
+    main.innerHTML = html;
+
+    document.getElementById('btn-add-category').onclick = () => {
+        const name = document.getElementById('new-category-name').value.trim();
+        if (name && !categories.includes(name)) {
+            categories.push(name);
+            saveSettings();
+            renderSettings();
+        } else if (categories.includes(name)) {
+            alert('Category already exists!');
+        }
+    };
+
+    window.deleteCategory = (cat) => {
+        if (confirm(`Delete category "${cat}"?`)) {
+            categories = categories.filter(c => c !== cat);
+            saveSettings();
+            renderSettings();
         }
     };
 };
