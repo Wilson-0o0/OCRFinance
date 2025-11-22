@@ -1,0 +1,190 @@
+:root {
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    --line-height: 1.6;
+    --font-weight: 400;
+
+    /* Dark Mode Palette - Simplified */
+    --bg-body: #0a0a0a;
+    --bg-card: #171717;
+    --bg-input: #262626;
+    --bg-hover: #2a2a2a;
+
+    --text-main: #ededed;
+    --text-muted: #a1a1a1;
+    --text-accent: #3b82f6;
+    /* Blue accent */
+
+    --border-color: #333333;
+    --border-focus: #525252;
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+    color-scheme: dark;
+}
+
+body {
+    margin: 0;
+    background-color: var(--bg-body);
+    color: var(--text-main);
+    font-family: var(--font-family);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#app {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    height: 100vh;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    text-align: left;
+}
+
+/* Sidebar */
+aside {
+    background-color: var(--bg-card);
+    border-right: 1px solid var(--border-color);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+aside h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-main);
+}
+
+nav button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.75rem 1rem;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+    font-size: 0.95rem;
+}
+
+nav button:hover,
+nav button.active {
+    background-color: var(--bg-hover);
+    color: var(--text-main);
+}
+
+nav button.active {
+    font-weight: 500;
+    border-left: 3px solid var(--text-accent);
+}
+
+/* Main Content */
+main {
+    padding: 2rem;
+    overflow-y: auto;
+}
+
+header {
+    margin-bottom: 2rem;
+}
+
+h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* Cards */
+.card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Upload Area */
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 3rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    background-color: var(--bg-input);
+}
+
+.upload-zone:hover {
+    border-color: var(--text-accent);
+}
+
+/* Buttons */
+.btn {
+    background-color: var(--text-accent);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.btn:hover {
+    opacity: 0.9;
+}
+
+.btn-secondary {
+    background-color: var(--bg-hover);
+    color: var(--text-main);
+}
+
+/* Tables */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+th,
+td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+th {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+td {
+    font-size: 0.95rem;
+}
+
+/* Utilities */
+.hidden {
+    display: none !important;
+}
+
+.flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.grid-cols-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
