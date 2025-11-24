@@ -1,6 +1,7 @@
-import { getAllTransactions, addTransaction, deleteTransaction, checkDuplicate } from './db.js';
+import { getAllTransactions, addTransaction, deleteTransaction, checkDuplicate, getAllUsers, deleteUser } from './db.js';
 import { recognizeText } from './ocr.js';
 import { parseTransactionText } from './parser.js';
+import { initAuth, getCurrentUser, login, signup, logout } from './auth.js';
 import Chart from 'chart.js/auto';
 
 // State
@@ -8,37 +9,75 @@ let currentView = 'dashboard';
 let categories = ['Food', 'Transport', 'Utilities', 'Entertainment', 'Health', 'Salary', 'Transfer', 'Uncategorized'];
 let accounts = ['Cash', 'Bank Account', 'Credit Card'];
 let openingBalances = {}; // { "AccountName": 1000.00 }
+let txSortField = 'date';
+let txSortOrder = 'desc';
+let txFilterStartDate = '';
+let txFilterEndDate = '';
+let txFilterMerchant = '';
+let txFilterType = '';
+let txFilterCategory = '';
+let txFilterAccount = '';
+let graphViewMode = 'Category';
+let dashboardStartDate = '';
+let dashboardEndDate = '';
 
 const loadSettings = () => {
-    const savedCats = localStorage.getItem('ocr_categories');
+    const user = getCurrentUser();
+    if (!user) return;
+
+    const prefix = `ocr_${user.username}_`;
+
+    const savedCats = localStorage.getItem(`${prefix}categories`);
     if (savedCats) categories = JSON.parse(savedCats);
+    else categories = ['Food', 'Transport', 'Utilities', 'Entertainment', 'Health', 'Salary', 'Transfer', 'Uncategorized']; // Reset to default if not found
 
-    const savedAccs = localStorage.getItem('ocr_accounts');
+    const savedAccs = localStorage.getItem(`${prefix}accounts`);
     if (savedAccs) accounts = JSON.parse(savedAccs);
+    else accounts = ['Cash', 'Bank Account', 'Credit Card'];
 
-    const savedBalances = localStorage.getItem('ocr_opening_balances');
+    const savedBalances = localStorage.getItem(`${prefix}opening_balances`);
     if (savedBalances) openingBalances = JSON.parse(savedBalances);
+    else openingBalances = {};
 };
 
 const saveSettings = () => {
-    localStorage.setItem('ocr_categories', JSON.stringify(categories));
-    localStorage.setItem('ocr_accounts', JSON.stringify(accounts));
-    localStorage.setItem('ocr_opening_balances', JSON.stringify(openingBalances));
+    const user = getCurrentUser();
+    if (!user) return;
+
+    const prefix = `ocr_${user.username}_`;
+
+    localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
+    localStorage.setItem(`${prefix}accounts`, JSON.stringify(accounts));
+    localStorage.setItem(`${prefix}opening_balances`, JSON.stringify(openingBalances));
 };
 
 // DOM Elements
 const app = document.getElementById('app');
 
 export const renderApp = async () => {
+    initAuth();
+    const user = getCurrentUser();
+
+    if (!user) {
+        renderLogin();
+        return;
+    }
+
     app.innerHTML = `
     <aside>
       <h2>OCR Finance</h2>
+      <div style="padding: 0 1rem; margin-bottom: 1rem; font-size: 0.9rem; color: #94a3b8;">
+        User: ${user.username} <br>
+        Role: ${user.role}
+      </div>
       <nav>
         <button id="nav-dashboard" class="active">Dashboard</button>
         <button id="nav-upload">Upload & Scan</button>
         <button id="nav-transactions">Transactions</button>
         <button id="nav-accounts">Accounts</button>
         <button id="nav-settings">Settings</button>
+        ${user.role === 'admin' ? '<button id="nav-admin">Admin</button>' : ''}
+        <button id="nav-logout" style="margin-top: auto; border-top: 1px solid #334155;">Logout</button>
       </nav>
     </aside>
     <main id="main-content">
@@ -53,12 +92,26 @@ export const renderApp = async () => {
 
 const setupNavigation = () => {
     const navs = ['dashboard', 'upload', 'transactions', 'accounts', 'settings'];
+    const user = getCurrentUser();
+
+    if (user.role === 'admin') {
+        navs.push('admin');
+    }
+
     navs.forEach(view => {
-        document.getElementById(`nav-${view}`).addEventListener('click', () => {
-            currentView = view;
-            updateActiveNav();
-            renderView();
-        });
+        const btn = document.getElementById(`nav-${view}`);
+        if (btn) {
+            btn.addEventListener('click', () => {
+                currentView = view;
+                updateActiveNav();
+                renderView();
+            });
+        }
+    });
+
+    document.getElementById('nav-logout').addEventListener('click', () => {
+        logout();
+        renderApp();
     });
 };
 
@@ -87,27 +140,35 @@ const renderView = async () => {
         case 'settings':
             renderSettings();
             break;
+        case 'admin':
+            renderAdmin();
+            break;
     }
 };
 
 // --- Dashboard ---
 const renderDashboard = async () => {
-    const transactions = await getAllTransactions();
+    const user = getCurrentUser();
+    const transactions = await getAllTransactions(user.username);
     const main = document.getElementById('main-content');
+
+    // Filter transactions for Dashboard
+    const filteredTransactions = transactions.filter(t => {
+        if (dashboardStartDate && t.date < dashboardStartDate) return false;
+        if (dashboardEndDate && t.date > dashboardEndDate) return false;
+        return true;
+    });
 
     // Calculate totals
     let totalIncome = 0;
     let totalExpense = 0;
-    const categoryExpenses = {};
 
-    transactions.forEach(t => {
+    // Calculate totals regardless of view mode
+    filteredTransactions.forEach(t => {
         if (t.type === 'Income') {
             totalIncome += t.amount;
         } else if (t.type === 'Expense') {
             totalExpense += t.amount;
-            // Category breakdown
-            const cat = t.category || 'Uncategorized';
-            categoryExpenses[cat] = (categoryExpenses[cat] || 0) + t.amount;
         }
     });
 
@@ -117,6 +178,67 @@ const renderDashboard = async () => {
 
     const netBalance = totalOpening + totalIncome - totalExpense;
 
+    // --- Graph Data Calculation ---
+    let chartData = {};
+    let chartType = 'doughnut';
+    let chartLabel = 'Expenses by Category';
+
+    if (graphViewMode === 'Category') {
+        chartLabel = 'Expenses by Category';
+        chartType = 'doughnut';
+        filteredTransactions.forEach(t => {
+            if (t.type === 'Expense') {
+                const cat = t.category || 'Uncategorized';
+                chartData[cat] = (chartData[cat] || 0) + t.amount;
+            }
+        });
+    } else if (graphViewMode === 'Account') {
+        chartLabel = 'Balance Movement by Account';
+        chartType = 'bar';
+        filteredTransactions.forEach(t => {
+            if (t.accountId) {
+                let amount = t.amount;
+                if (t.type === 'Expense') amount = -amount;
+                if (t.type === 'Transfer' && t.toAccountId) {
+                    // For transfer, we could show net flow, but for simplicity let's just show impact on primary account
+                    amount = -amount;
+                }
+                chartData[t.accountId] = (chartData[t.accountId] || 0) + amount;
+            }
+        });
+    } else if (graphViewMode === 'Merchant') {
+        chartLabel = 'Top Merchants (Expenses)';
+        chartType = 'doughnut';
+        filteredTransactions.forEach(t => {
+            if (t.type === 'Expense') {
+                chartData[t.merchant] = (chartData[t.merchant] || 0) + t.amount;
+            }
+        });
+        // Sort and limit to top 10
+        const sorted = Object.entries(chartData).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        chartData = Object.fromEntries(sorted);
+    } else if (graphViewMode === 'Type') {
+        chartLabel = 'Transactions by Type';
+        chartType = 'pie';
+        filteredTransactions.forEach(t => {
+            chartData[t.type] = (chartData[t.type] || 0) + t.amount;
+        });
+    } else if (graphViewMode === 'Time') {
+        chartLabel = 'Transaction Volume Over Time';
+        chartType = 'line';
+        // Group by Date
+        const timeData = {};
+        filteredTransactions.forEach(t => {
+            const date = t.date;
+            timeData[date] = (timeData[date] || 0) + t.amount;
+        });
+        // Sort by date
+        const sortedKeys = Object.keys(timeData).sort((a, b) => new Date(a) - new Date(b));
+        const sortedData = {};
+        sortedKeys.forEach(k => sortedData[k] = timeData[k]);
+        chartData = sortedData;
+    }
+
     main.innerHTML = `
         <header>
             <h1>Dashboard</h1>
@@ -125,7 +247,7 @@ const renderDashboard = async () => {
             <div class="card">
                 <h3>Net Balance</h3>
                 <p class="amount ${netBalance >= 0 ? 'positive' : 'negative'}">$${netBalance.toFixed(2)}</p>
-                <small>Includes Opening Balances: $${totalOpening.toFixed(2)}</small>
+                <small style="color: var(--text-muted);">Includes Opening Balances: $${totalOpening.toFixed(2)}</small>
             </div>
             <div class="card">
                 <h3>Total Income</h3>
@@ -138,31 +260,71 @@ const renderDashboard = async () => {
         </div>
 
         <div class="card" style="margin-top: 2rem;">
-            <h3>Expenses by Category</h3>
-            <div style="height: 300px; position: relative;">
-                <canvas id="expense-chart"></canvas>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+                <h3>${chartLabel}</h3>
+                <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-input); padding: 0.25rem 0.5rem; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <input type="date" value="${dashboardStartDate}" onchange="window.handleDashboardDateChange('start', this.value)" style="border: none; padding: 0.25rem; background: transparent; width: auto; color: var(--text-main);">
+                        <span style="color: var(--text-muted);">to</span>
+                        <input type="date" value="${dashboardEndDate}" onchange="window.handleDashboardDateChange('end', this.value)" style="border: none; padding: 0.25rem; background: transparent; width: auto; color: var(--text-main);">
+                    </div>
+                    <select id="graph-view-select" onchange="window.handleGraphViewChange(this.value)" style="min-width: 150px; width: auto;">
+                        <option value="Category" ${graphViewMode === 'Category' ? 'selected' : ''}>View by Category</option>
+                        <option value="Time" ${graphViewMode === 'Time' ? 'selected' : ''}>View by Time</option>
+                        <option value="Account" ${graphViewMode === 'Account' ? 'selected' : ''}>View by Account</option>
+                        <option value="Merchant" ${graphViewMode === 'Merchant' ? 'selected' : ''}>View by Merchant</option>
+                        <option value="Type" ${graphViewMode === 'Type' ? 'selected' : ''}>View by Type</option>
+                    </select>
+                </div>
+            </div>
+            <div style="height: 350px; position: relative;">
+                <canvas id="dashboard-chart"></canvas>
             </div>
         </div>
     `;
 
-    renderCategoryChart(categoryExpenses);
+    renderChart(chartData, chartType, chartLabel);
+
+    window.handleGraphViewChange = (mode) => {
+        graphViewMode = mode;
+        renderDashboard();
+    };
+
+    window.handleDashboardDateChange = (type, value) => {
+        if (type === 'start') dashboardStartDate = value;
+        if (type === 'end') dashboardEndDate = value;
+        renderDashboard();
+    };
 };
 
-const renderCategoryChart = (data) => {
-    const ctx = document.getElementById('expense-chart').getContext('2d');
+const renderChart = (data, type, label) => {
+    const ctx = document.getElementById('dashboard-chart').getContext('2d');
+
+    // Destroy existing chart if it exists
+    if (window.dashboardChart instanceof Chart) {
+        window.dashboardChart.destroy();
+    }
+
     const labels = Object.keys(data);
     const values = Object.values(data);
 
-    new Chart(ctx, {
-        type: 'doughnut',
+    const colors = [
+        '#7aa2f7', '#9ece6a', '#e0af68', '#f7768e', '#bb9af7', '#7dcfff', '#ff9e64', '#db4b4b',
+        '#2ac3de', '#73daca', '#b4f9f8', '#c0caf5', '#a9b1d6', '#9aa5ce', '#565f89', '#414868'
+    ];
+
+    window.dashboardChart = new Chart(ctx, {
+        type: type,
         data: {
             labels: labels,
             datasets: [{
+                label: label,
                 data: values,
-                backgroundColor: [
-                    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'
-                ],
-                borderWidth: 0
+                backgroundColor: type === 'line' || type === 'bar' ? '#7aa2f7' : colors,
+                borderColor: type === 'line' ? '#7aa2f7' : '#ffffff',
+                borderWidth: 1,
+                fill: type === 'line' ? false : true,
+                tension: 0.1
             }]
         },
         options: {
@@ -170,12 +332,19 @@ const renderCategoryChart = (data) => {
             maintainAspectRatio: false,
             plugins: {
                 legend: {
-                    position: 'right'
+                    position: 'right',
+                    display: type !== 'bar' && type !== 'line'
                 }
-            }
+            },
+            scales: (type === 'bar' || type === 'line') ? {
+                y: {
+                    beginAtZero: true
+                }
+            } : {}
         }
     });
 };
+
 
 // --- Upload ---
 const renderUpload = () => {
@@ -321,9 +490,10 @@ const renderReviewForm = async (transactions) => {
 
     // Check for duplicates
     logToUI('Checking for duplicates in database...');
+    const user = getCurrentUser();
     let duplicateCount = 0;
     for (let t of transactions) {
-        t.isDuplicate = await checkDuplicate(t);
+        t.isDuplicate = await checkDuplicate(t, user.username);
         if (t.isDuplicate) duplicateCount++;
     }
     if (duplicateCount > 0) {
@@ -338,7 +508,7 @@ const renderReviewForm = async (transactions) => {
     <div class="card">
       <h3>Review Extracted Data</h3>
       
-      <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #e2e8f0;">
+      <div style="background: var(--bg-input); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
         <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Apply Account to All Transactions:</label>
         <div style="display: flex; gap: 0.5rem;">
             <select id="bulk-account-select" style="flex: 1;">
@@ -355,7 +525,7 @@ const renderReviewForm = async (transactions) => {
 
     transactions.forEach((t, index) => {
         const duplicateBadge = t.isDuplicate
-            ? '<span style="background: #ef4444; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-left: 0.5rem;">Possible Duplicate</span>'
+            ? '<span style="background: rgba(247, 118, 142, 0.2); color: var(--text-error); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-left: 0.5rem; font-weight: 600;">Possible Duplicate</span>'
             : '';
         const checked = t.isDuplicate ? '' : 'checked';
 
@@ -374,7 +544,7 @@ const renderReviewForm = async (transactions) => {
         const isTransfer = t.type === 'Transfer';
 
         html += `
-        <div class="review-item" style="margin-bottom: 1rem; padding: 1rem; border: 1px solid ${t.isDuplicate ? '#fca5a5' : '#ddd'}; border-radius: 4px; background: ${t.isDuplicate ? '#fef2f2' : 'transparent'};">
+        <div class="review-item" style="margin-bottom: 1rem; padding: 1rem; border: 1px solid ${t.isDuplicate ? 'var(--text-error)' : 'var(--border-color)'}; border-radius: 8px; background: ${t.isDuplicate ? 'rgba(247, 118, 142, 0.05)' : 'transparent'};">
             <div style="margin-bottom: 0.5rem; display: flex; align-items: center;">
                 <label style="font-weight: bold; display: flex; align-items: center; cursor: pointer;">
                     <input type="checkbox" id="save-${index}" ${checked} style="margin-right: 0.5rem;"> 
@@ -382,25 +552,25 @@ const renderReviewForm = async (transactions) => {
                 </label>
                 ${duplicateBadge}
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
-                <label>Date: <input type="date" id="date-${index}" value="${t.date || ''}" style="width: 100%"></label>
-                <label>Amount: <input type="number" step="0.01" id="amount-${index}" value="${t.amount || 0}" style="width: 100%"></label>
-                <label>Merchant: <input type="text" id="merchant-${index}" value="${t.merchant || ''}" style="width: 100%"></label>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+                <label>Date <input type="date" id="date-${index}" value="${t.date || ''}"></label>
+                <label>Amount <input type="number" step="0.01" id="amount-${index}" value="${t.amount || 0}"></label>
+                <label>Merchant <input type="text" id="merchant-${index}" value="${t.merchant || ''}"></label>
                 
-                <label>Type: 
-                    <select id="type-${index}" onchange="handleTypeChange(this, ${index})" style="width: 100%">${typeOptions}</select>
+                <label>Type 
+                    <select id="type-${index}" onchange="handleTypeChange(this, ${index})">${typeOptions}</select>
                 </label>
                 
-                <label id="lbl-account-${index}">Account ${isTransfer ? '(From)' : ''}: 
-                    <select id="account-${index}" onchange="handleAccountChange(this, ${index})" style="width: 100%">${currentAccountOptions}</select>
+                <label id="lbl-account-${index}">Account ${isTransfer ? '(From)' : ''} 
+                    <select id="account-${index}" onchange="handleAccountChange(this, ${index})">${currentAccountOptions}</select>
                 </label>
 
-                <label id="lbl-to-account-${index}" style="display: ${isTransfer ? 'block' : 'none'};">Account (To): 
-                    <select id="to-account-${index}" onchange="handleAccountChange(this, ${index})" style="width: 100%">${accountOptions}</select>
+                <label id="lbl-to-account-${index}" style="display: ${isTransfer ? 'block' : 'none'};">Account (To) 
+                    <select id="to-account-${index}" onchange="handleAccountChange(this, ${index})">${accountOptions}</select>
                 </label>
 
-                <label>Category: 
-                    <select id="category-${index}" onchange="handleCategoryChange(this, ${index})" style="width: 100%">${categoryOptions}</select>
+                <label>Category 
+                    <select id="category-${index}" onchange="handleCategoryChange(this, ${index})">${categoryOptions}</select>
                 </label>
             </div>
         </div>
@@ -409,7 +579,7 @@ const renderReviewForm = async (transactions) => {
 
     html += `
       </div>
-      <div style="margin-top: 1rem;">
+      <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
         <button id="btn-save-all" class="btn">Save Selected Transactions</button>
         <button id="btn-cancel-review" class="btn-secondary">Cancel</button>
       </div>
@@ -514,7 +684,7 @@ const renderReviewForm = async (transactions) => {
                 toAccountId = document.getElementById(`to-account-${i}`).value;
             }
 
-            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category });
+            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.username });
             savedCount++;
         }
 
@@ -532,27 +702,96 @@ const renderReviewForm = async (transactions) => {
 };
 
 // --- Transactions List ---
+// --- Transactions List ---
 const renderTransactions = async () => {
-    const transactions = await getAllTransactions();
+    const user = getCurrentUser();
+    const transactions = await getAllTransactions(user.username);
     const main = document.getElementById('main-content');
 
     const accountOptions = accounts.map(opt => `<option value="${opt}">${opt}</option>`).join('');
     const categoryOptions = categories.map(opt => `<option value="${opt}">${opt}</option>`).join('');
 
+    // Filter Logic
+    let filteredTxs = transactions.filter(t => {
+        if (txFilterStartDate && t.date < txFilterStartDate) return false;
+        if (txFilterEndDate && t.date > txFilterEndDate) return false;
+        if (txFilterMerchant && !t.merchant.toLowerCase().includes(txFilterMerchant.toLowerCase())) return false;
+        if (txFilterType && t.type !== txFilterType) return false;
+        if (txFilterCategory && t.category !== txFilterCategory) return false;
+        if (txFilterAccount && t.accountId !== txFilterAccount && t.toAccountId !== txFilterAccount) return false;
+        return true;
+    });
+
+    // Sort Logic
+    filteredTxs.sort((a, b) => {
+        let valA = a[txSortField];
+        let valB = b[txSortField];
+
+        // Handle amounts
+        if (txSortField === 'amount') {
+            valA = parseFloat(valA);
+            valB = parseFloat(valB);
+        }
+        // Handle dates
+        if (txSortField === 'date') {
+            valA = new Date(valA);
+            valB = new Date(valB);
+        }
+        // Handle strings (case insensitive)
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+
+        if (valA < valB) return txSortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return txSortOrder === 'asc' ? 1 : -1;
+        return 0;
+    });
+
     let html = `
-    <header style="display: flex; justify-content: space-between; align-items: center;">
+    <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
         <h1>All Transactions</h1>
-        <button id="btn-show-add-tx" class="btn">Add Transaction</button>
+        <button id="btn-show-add-tx" class="btn">
+            <span>+</span> Add Transaction
+        </button>
     </header>
 
+    <!-- Filter Controls -->
+    <div class="card" style="margin-bottom: 1.5rem; padding: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h4 style="margin: 0; font-size: 1.1rem; color: var(--text-accent);">Filters</h4>
+            <button class="btn-secondary" onclick="window.clearTxFilters()" style="font-size: 0.85rem;">Clear Filters</button>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+            <div style="display: flex; gap: 0.5rem; align-items: center; background: var(--bg-input); padding: 0.25rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">
+                <input type="date" value="${txFilterStartDate}" onchange="window.handleTxFilter('startDate', this.value)" style="border: none; padding: 0.5rem; background: transparent; width: auto;">
+                <span style="color: var(--text-muted);">to</span>
+                <input type="date" value="${txFilterEndDate}" onchange="window.handleTxFilter('endDate', this.value)" style="border: none; padding: 0.5rem; background: transparent; width: auto;">
+            </div>
+            <input type="text" value="${txFilterMerchant}" oninput="window.handleTxFilter('merchant', this.value)" placeholder="Search Merchant..." style="flex: 1; min-width: 200px;">
+            <select onchange="window.handleTxFilter('type', this.value)" style="width: auto; min-width: 120px;">
+                <option value="">All Types</option>
+                <option value="Income" ${txFilterType === 'Income' ? 'selected' : ''}>Income</option>
+                <option value="Expense" ${txFilterType === 'Expense' ? 'selected' : ''}>Expense</option>
+                <option value="Transfer" ${txFilterType === 'Transfer' ? 'selected' : ''}>Transfer</option>
+            </select>
+            <select onchange="window.handleTxFilter('category', this.value)" style="width: auto; min-width: 150px;">
+                <option value="">All Categories</option>
+                ${categories.map(c => `<option value="${c}" ${txFilterCategory === c ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+            <select onchange="window.handleTxFilter('account', this.value)" style="width: auto; min-width: 150px;">
+                <option value="">All Accounts</option>
+                ${accounts.map(a => `<option value="${a}" ${txFilterAccount === a ? 'selected' : ''}>${a}</option>`).join('')}
+            </select>
+        </div>
+    </div>
+
     <!-- Manual Input Form -->
-    <div id="manual-tx-form" class="card hidden" style="margin-bottom: 1rem; border: 1px solid #3b82f6;">
-        <h3>Add New Transaction</h3>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-            <label>Date: <input type="date" id="new-date" value="${new Date().toISOString().split('T')[0]}"></label>
-            <label>Merchant/Description: <input type="text" id="new-merchant" placeholder="e.g. Grocery Store"></label>
+    <div id="manual-tx-form" class="card hidden" style="margin-bottom: 1.5rem; border: 1px solid var(--text-accent);">
+        <h3 style="color: var(--text-accent); margin-bottom: 1.5rem;">Add New Transaction</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem;">
+            <label>Date <input type="date" id="new-date" value="${new Date().toISOString().split('T')[0]}"></label>
+            <label>Merchant <input type="text" id="new-merchant" placeholder="e.g. Grocery Store"></label>
             
-            <label>Type: 
+            <label>Type 
                 <select id="new-type" onchange="toggleNewTxFields()">
                     <option value="Expense">Expense</option>
                     <option value="Income">Income</option>
@@ -560,67 +799,63 @@ const renderTransactions = async () => {
                 </select>
             </label>
             
-            <label>Amount: <input type="number" step="0.01" id="new-amount" placeholder="0.00"></label>
+            <label>Amount <input type="number" step="0.01" id="new-amount" placeholder="0.00"></label>
             
-            <label id="lbl-new-account">Account: 
+            <label id="lbl-new-account">Account 
                 <select id="new-account">${accountOptions}</select>
             </label>
             
-            <label id="lbl-new-to-account" style="display: none;">To Account: 
+            <label id="lbl-new-to-account" style="display: none;">To Account 
                 <select id="new-to-account">${accountOptions}</select>
             </label>
 
-            <label>Category: 
+            <label>Category 
                 <select id="new-category">${categoryOptions}</select>
             </label>
         </div>
-        <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
-            <button id="btn-save-tx" class="btn">Save Transaction</button>
+        <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: flex-end;">
             <button id="btn-cancel-tx" class="btn-secondary">Cancel</button>
+            <button id="btn-save-tx" class="btn">Save Transaction</button>
         </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="overflow-x: auto;">
         <table>
             <thead>
                 <tr>
-                    <th>Date</th>
-                    <th>Merchant</th>
-                    <th>Type</th>
-                    <th>Category</th>
-                    <th>Account</th>
-                    <th>Amount</th>
+                    <th onclick="window.handleTxSort('date')" style="cursor: pointer;">Date ${txSortField === 'date' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
+                    <th onclick="window.handleTxSort('merchant')" style="cursor: pointer;">Merchant ${txSortField === 'merchant' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
+                    <th onclick="window.handleTxSort('type')" style="cursor: pointer;">Type ${txSortField === 'type' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
+                    <th onclick="window.handleTxSort('category')" style="cursor: pointer;">Category ${txSortField === 'category' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
+                    <th onclick="window.handleTxSort('accountId')" style="cursor: pointer;">Account ${txSortField === 'accountId' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
+                    <th onclick="window.handleTxSort('amount')" style="cursor: pointer;">Amount ${txSortField === 'amount' ? (txSortOrder === 'asc' ? '▲' : '▼') : ''}</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                `;
+    `;
 
-    if (transactions.length === 0) {
-        html += '<tr><td colspan="7" style="text-align: center;">No transactions found.</td></tr>';
+    if (filteredTxs.length === 0) {
+        html += '<tr><td colspan="7" style="text-align: center; padding: 3rem; color: var(--text-muted);">No transactions found matching your filters.</td></tr>';
     } else {
-        // Sort by date desc
-        transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        transactions.forEach(t => {
-            let accountDisplay = t.accountId || '-';
-            if (t.type === 'Transfer' && t.toAccountId) {
-                accountDisplay = `${t.accountId} &rarr; ${t.toAccountId}`;
-            }
-
+        filteredTxs.forEach(t => {
             html += `
-        <tr>
-          <td>${t.date}</td>
-          <td>${t.merchant}</td>
-          <td>${t.type || '-'}</td>
-          <td>${t.category}</td>
-          <td>${accountDisplay}</td>
-          <td>$${t.amount.toFixed(2)}</td>
-          <td>
-            <button class="btn-secondary" onclick="window.deleteTx(${t.id})">Delete</button>
-          </td>
-        </tr>
-      `;
+            <tr>
+                <td>${t.date}</td>
+                <td style="font-weight: 500; color: var(--text-main);">${t.merchant}</td>
+                <td>
+                    <span class="badge ${t.type.toLowerCase()}">${t.type}</span>
+                </td>
+                <td>${t.category || '<span style="color: var(--text-muted);">-</span>'}</td>
+                <td>${t.accountId || '<span style="color: var(--text-muted);">-</span>'}</td>
+                <td style="font-weight: 600; font-family: monospace; font-size: 1rem; color: ${t.type === 'Income' ? 'var(--text-success)' : (t.type === 'Expense' ? 'var(--text-error)' : 'var(--text-purple)')}">
+                    $${t.amount.toFixed(2)}
+                </td>
+                <td>
+                    <button class="btn-secondary" onclick="window.deleteTx('${t.id}')" style="color: var(--text-error); border-color: rgba(247, 118, 142, 0.5); padding: 0.4rem 0.8rem; font-size: 0.8rem;">Delete</button>
+                </td>
+            </tr>
+            `;
         });
     }
 
@@ -628,7 +863,7 @@ const renderTransactions = async () => {
             </tbody>
         </table>
     </div>
-`;
+    `;
 
     main.innerHTML = html;
 
@@ -668,7 +903,7 @@ const renderTransactions = async () => {
             return;
         }
 
-        await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category });
+        await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.username });
         renderTransactions();
     };
 
@@ -678,11 +913,44 @@ const renderTransactions = async () => {
             renderTransactions();
         }
     };
+
+    // Sort Handler
+    window.handleTxSort = (field) => {
+        if (txSortField === field) {
+            txSortOrder = txSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            txSortField = field;
+            txSortOrder = 'asc'; // Default to asc for new field
+        }
+        renderTransactions();
+    };
+
+    // Filter Handlers
+    window.handleTxFilter = (field, value) => {
+        if (field === 'startDate') txFilterStartDate = value;
+        if (field === 'endDate') txFilterEndDate = value;
+        if (field === 'merchant') txFilterMerchant = value;
+        if (field === 'type') txFilterType = value;
+        if (field === 'category') txFilterCategory = value;
+        if (field === 'account') txFilterAccount = value;
+        renderTransactions();
+    };
+
+    window.clearTxFilters = () => {
+        txFilterStartDate = '';
+        txFilterEndDate = '';
+        txFilterMerchant = '';
+        txFilterType = '';
+        txFilterCategory = '';
+        txFilterAccount = '';
+        renderTransactions();
+    };
 };
 
 // --- Accounts View ---
 const renderAccounts = async () => {
-    const transactions = await getAllTransactions();
+    const user = getCurrentUser();
+    const transactions = await getAllTransactions(user.username);
     const main = document.getElementById('main-content');
 
     // Calculate Net Movement per account
@@ -735,7 +1003,7 @@ const renderAccounts = async () => {
                     onchange="updateOpeningBalance('${acc}', this.value)"
                     style="width: 100px; padding: 0.25rem;">
             </td>
-            <td style="color: ${movement >= 0 ? '#10b981' : '#ef4444'}">
+            <td style="color: ${movement >= 0 ? 'var(--text-success)' : 'var(--text-error)'}">
                 ${movement >= 0 ? '+' : ''}$${movement.toFixed(2)}
             </td>
             <td style="font-weight: bold;">$${current.toFixed(2)}</td>
@@ -799,6 +1067,13 @@ const renderSettings = () => {
         <ul style="list-style: none; padding: 0;">
     `;
 
+    // ... existing settings code ... (truncated in view, but assuming I'm appending after)
+    // Wait, I need to be careful. The previous view_file was truncated.
+    // I should probably read the end of the file first to be safe, or just append if I'm sure.
+    // But I can't append with replace_file_content easily without a target.
+    // Let me read the end of the file first.
+
+
     categories.forEach(cat => {
         html += `
         <li style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee;">
@@ -834,3 +1109,128 @@ const renderSettings = () => {
         }
     };
 };
+
+// --- Auth Views ---
+
+const renderLogin = () => {
+    app.innerHTML = `
+    <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f1f5f9;">
+        <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
+            <h2 style="text-align: center; margin-bottom: 2rem;">Login</h2>
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <input type="text" id="login-username" placeholder="Username" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="password" id="login-password" placeholder="Password" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem;">
+                    <input type="checkbox" id="login-remember"> Remember Me
+                </label>
+                <button id="btn-login" class="btn" style="margin-top: 1rem;">Login</button>
+                <p style="text-align: center; font-size: 0.9rem;">
+                    Don't have an account? <a href="#" id="link-signup">Sign up</a>
+                </p>
+            </div>
+        </div>
+    </div>
+    `;
+
+    document.getElementById('btn-login').onclick = async () => {
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        const remember = document.getElementById('login-remember').checked;
+
+        if (await login(username, password, remember)) {
+            renderApp();
+        } else {
+            alert('Invalid credentials');
+        }
+    };
+
+    document.getElementById('link-signup').onclick = (e) => {
+        e.preventDefault();
+        renderSignup();
+    };
+};
+
+const renderSignup = () => {
+    app.innerHTML = `
+    <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f1f5f9;">
+        <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
+            <h2 style="text-align: center; margin-bottom: 2rem;">Sign Up</h2>
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <input type="text" id="signup-username" placeholder="Username" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="password" id="signup-password" placeholder="Password" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
+                <button id="btn-signup" class="btn" style="margin-top: 1rem;">Sign Up</button>
+                <p style="text-align: center; font-size: 0.9rem;">
+                    Already have an account? <a href="#" id="link-login">Login</a>
+                </p>
+            </div>
+        </div>
+    </div>
+    `;
+
+    document.getElementById('btn-signup').onclick = async () => {
+        const username = document.getElementById('signup-username').value;
+        const password = document.getElementById('signup-password').value;
+
+        try {
+            await signup(username, password);
+            renderApp();
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
+    document.getElementById('link-login').onclick = (e) => {
+        e.preventDefault();
+        renderLogin();
+    };
+};
+
+const renderAdmin = async () => {
+    const users = await getAllUsers();
+    const main = document.getElementById('main-content');
+
+    let html = `
+    <header>
+        <h1>Admin Dashboard</h1>
+    </header>
+    <div class="card">
+        <h3>User Management</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    users.forEach(u => {
+        html += `
+        <tr>
+            <td>${u.username}</td>
+            <td>${u.role}</td>
+            <td>
+                ${u.role !== 'admin' ? `<button class="btn-secondary" onclick="window.deleteUserBtn('${u.username}')" style="color: var(--text-error); border-color: rgba(247, 118, 142, 0.5);">Delete</button>` : '-'}
+            </td>
+        </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    </div>
+    `;
+
+    main.innerHTML = html;
+
+    window.deleteUserBtn = async (username) => {
+        if (confirm(`Delete user "${username}"?`)) {
+            await deleteUser(username);
+            renderAdmin();
+        }
+    };
+};
+
