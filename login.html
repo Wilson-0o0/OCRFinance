@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - OCR Financial Manager</title>
+    <link rel="stylesheet" href="/src/login.css">
+  </head>
+  <body>
+    <div id="login-app">
+        <div class="login-container">
+            <div class="card" id="login-form">
+                <h2>Welcome Back</h2>
+                <p class="subtitle">Login to manage your finances</p>
+                
+                <div class="form-group">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" placeholder="Enter your username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Enter your password">
+                </div>
+                
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="login-remember">
+                    <label for="login-remember">Remember me</label>
+                </div>
+                
+                <button id="btn-login" class="btn-primary">Login</button>
+                
+                <p class="footer-text">
+                    Don't have an account? <a href="#" id="link-signup">Sign up</a>
+                </p>
+            </div>
+
+            <div class="card hidden" id="signup-form">
+                <h2>Create Account</h2>
+                <p class="subtitle">Start tracking your expenses today</p>
+                
+                <div class="form-group">
+                    <label for="signup-username">Username</label>
+                    <input type="text" id="signup-username" placeholder="Choose a username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="signup-password">Password</label>
+                    <input type="password" id="signup-password" placeholder="Choose a password">
+                </div>
+                
+                <button id="btn-signup" class="btn-primary">Sign Up</button>
+                
+                <p class="footer-text">
+                    Already have an account? <a href="#" id="link-login">Login</a>
+                </p>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/login.js"></script>
+  </body>
+</html>

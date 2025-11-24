@@ -59,7 +59,7 @@ export const renderApp = async () => {
     const user = getCurrentUser();
 
     if (!user) {
-        renderLogin();
+        window.location.href = '/login.html';
         return;
     }
 
@@ -111,7 +111,7 @@ const setupNavigation = () => {
 
     document.getElementById('nav-logout').addEventListener('click', () => {
         logout();
-        renderApp();
+        window.location.href = '/login.html';
     });
 };
 
@@ -1110,80 +1110,7 @@ const renderSettings = () => {
     };
 };
 
-// --- Auth Views ---
 
-const renderLogin = () => {
-    app.innerHTML = `
-    <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f1f5f9;">
-        <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
-            <h2 style="text-align: center; margin-bottom: 2rem;">Login</h2>
-            <div style="display: flex; flex-direction: column; gap: 1rem;">
-                <input type="text" id="login-username" placeholder="Username" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
-                <input type="password" id="login-password" placeholder="Password" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
-                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem;">
-                    <input type="checkbox" id="login-remember"> Remember Me
-                </label>
-                <button id="btn-login" class="btn" style="margin-top: 1rem;">Login</button>
-                <p style="text-align: center; font-size: 0.9rem;">
-                    Don't have an account? <a href="#" id="link-signup">Sign up</a>
-                </p>
-            </div>
-        </div>
-    </div>
-    `;
-
-    document.getElementById('btn-login').onclick = async () => {
-        const username = document.getElementById('login-username').value;
-        const password = document.getElementById('login-password').value;
-        const remember = document.getElementById('login-remember').checked;
-
-        if (await login(username, password, remember)) {
-            renderApp();
-        } else {
-            alert('Invalid credentials');
-        }
-    };
-
-    document.getElementById('link-signup').onclick = (e) => {
-        e.preventDefault();
-        renderSignup();
-    };
-};
-
-const renderSignup = () => {
-    app.innerHTML = `
-    <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f1f5f9;">
-        <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
-            <h2 style="text-align: center; margin-bottom: 2rem;">Sign Up</h2>
-            <div style="display: flex; flex-direction: column; gap: 1rem;">
-                <input type="text" id="signup-username" placeholder="Username" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
-                <input type="password" id="signup-password" placeholder="Password" style="padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px;">
-                <button id="btn-signup" class="btn" style="margin-top: 1rem;">Sign Up</button>
-                <p style="text-align: center; font-size: 0.9rem;">
-                    Already have an account? <a href="#" id="link-login">Login</a>
-                </p>
-            </div>
-        </div>
-    </div>
-    `;
-
-    document.getElementById('btn-signup').onclick = async () => {
-        const username = document.getElementById('signup-username').value;
-        const password = document.getElementById('signup-password').value;
-
-        try {
-            await signup(username, password);
-            renderApp();
-        } catch (err) {
-            alert(err.message);
-        }
-    };
-
-    document.getElementById('link-login').onclick = (e) => {
-        e.preventDefault();
-        renderLogin();
-    };
-};
 
 const renderAdmin = async () => {
     const users = await getAllUsers();

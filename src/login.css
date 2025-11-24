@@ -1,0 +1,164 @@
+:root {
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+
+    /* Tokyo Night Palette */
+    --bg-body: #1a1b26;
+    --bg-card: rgba(36, 40, 59, 0.8);
+    --bg-input: #1f2335;
+    --text-main: #c0caf5;
+    --text-muted: #a9b1d6;
+    --text-accent: #7aa2f7;
+    --border-color: #414868;
+    --border-focus: #7aa2f7;
+
+    --transition: 0.2s ease;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background-color: var(--bg-body);
+    background-image: radial-gradient(circle at center, #2f334d 0%, #1a1b26 100%);
+    color: var(--text-main);
+    font-family: var(--font-family);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.login-container {
+    width: 100%;
+    max-width: 400px;
+    padding: 1rem;
+}
+
+.card {
+    background-color: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 2.5rem;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+h2 {
+    margin: 0 0 0.5rem 0;
+    text-align: center;
+    color: var(--text-main);
+    font-size: 1.75rem;
+}
+
+.subtitle {
+    text-align: center;
+    color: var(--text-muted);
+    margin: 0 0 2rem 0;
+    font-size: 0.95rem;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+input[type="text"],
+input[type="password"] {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 1rem;
+    transition: all var(--transition);
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(122, 162, 247, 0.2);
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.checkbox-group input {
+    margin: 0;
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+}
+
+.checkbox-group label {
+    margin: 0;
+    cursor: pointer;
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 0.875rem;
+    background: linear-gradient(135deg, var(--text-accent), #5d8eea);
+    color: #1a1b26;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition);
+    margin-top: 1rem;
+}
+
+.btn-primary:hover {
+    opacity: 0.95;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(122, 162, 247, 0.3);
+}
+
+.footer-text {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+a {
+    color: var(--text-accent);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color var(--transition);
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.hidden {
+    display: none;
+}
