@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - OCR Financial Manager</title>
+  <script type="module" crossorigin src="/OCRFinance/assets/login-BPAa4-UO.js"></script>
+  <link rel="modulepreload" crossorigin href="/OCRFinance/assets/auth-DGiWI4RX.js">
+  <link rel="stylesheet" crossorigin href="/OCRFinance/assets/login-D23clsYk.css">
+</head>
+
+<body>
+    <div id="login-app">
+        <div class="login-container">
+            <form id="login-form" class="card">
+                <h2>Welcome Back</h2>
+                <p class="subtitle">Login to manage your finances</p>
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="text" id="login-email" placeholder="Enter your email" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Enter your password" required>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="login-remember">
+                    <label for="login-remember">Remember me</label>
+                </div>
+                <button type="button" id="btn-login" class="btn-primary">Login</button>
+                <p class="footer-text">Don't have an account? <a href="#" id="link-signup">Sign up</a></p>
+            </form>
+
+            <form id="signup-form" class="card hidden">
+                <h2>Create Account</h2>
+                <p class="subtitle">Start tracking your expenses today</p>
+                <div class="form-group">
+                    <label for="signup-email">Email</label>
+                    <input type="text" id="signup-email" placeholder="Choose an email" required>
+                </div>
+                <div class="form-group">
+                    <label for="signup-password">Password</label>
+                    <input type="password" id="signup-password" placeholder="Choose a password" required>
+                </div>
+                <button type="button" id="btn-signup" class="btn-primary">Sign Up</button>
+                <p class="footer-text">Already have an account? <a href="#" id="link-login">Login</a></p>
+            </form>
+        </div>
+    </div>
+</body>
+
+</html>
