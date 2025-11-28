@@ -1,4 +1,5 @@
 import { getAllTransactions, addTransaction, deleteTransaction, checkDuplicate, getAllUsers, deleteUser } from './db.js';
+import { updateUserRole, getAllUsersFromFirestore } from './firestore.js';
 import { recognizeText } from './ocr.js';
 import { parseTransactionText } from './parser.js';
 import { initAuth, getCurrentUser, login, signup, logout } from './auth.js';
@@ -25,7 +26,7 @@ const loadSettings = () => {
     const user = getCurrentUser();
     if (!user) return;
 
-    const prefix = `ocr_${user.username}_`;
+    const prefix = `ocr_${user.uid}_`;
 
     const savedCats = localStorage.getItem(`${prefix}categories`);
     if (savedCats) categories = JSON.parse(savedCats);
@@ -44,7 +45,7 @@ const saveSettings = () => {
     const user = getCurrentUser();
     if (!user) return;
 
-    const prefix = `ocr_${user.username}_`;
+    const prefix = `ocr_${user.uid}_`;
 
     localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
     localStorage.setItem(`${prefix}accounts`, JSON.stringify(accounts));
@@ -55,10 +56,10 @@ const saveSettings = () => {
 const app = document.getElementById('app');
 
 export const renderApp = async () => {
-    initAuth();
     const user = getCurrentUser();
 
     if (!user) {
+        // Fallback safety
         window.location.href = '/login.html';
         return;
     }
@@ -149,7 +150,7 @@ const renderView = async () => {
 // --- Dashboard ---
 const renderDashboard = async () => {
     const user = getCurrentUser();
-    const transactions = await getAllTransactions(user.username);
+    const transactions = await getAllTransactions(user.uid);
     const main = document.getElementById('main-content');
 
     // Filter transactions for Dashboard
@@ -493,7 +494,7 @@ const renderReviewForm = async (transactions) => {
     const user = getCurrentUser();
     let duplicateCount = 0;
     for (let t of transactions) {
-        t.isDuplicate = await checkDuplicate(t, user.username);
+        t.isDuplicate = await checkDuplicate(t, user.uid);
         if (t.isDuplicate) duplicateCount++;
     }
     if (duplicateCount > 0) {
@@ -684,7 +685,7 @@ const renderReviewForm = async (transactions) => {
                 toAccountId = document.getElementById(`to-account-${i}`).value;
             }
 
-            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.username });
+            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.uid });
             savedCount++;
         }
 
@@ -705,7 +706,7 @@ const renderReviewForm = async (transactions) => {
 // --- Transactions List ---
 const renderTransactions = async () => {
     const user = getCurrentUser();
-    const transactions = await getAllTransactions(user.username);
+    const transactions = await getAllTransactions(user.uid);
     const main = document.getElementById('main-content');
 
     const accountOptions = accounts.map(opt => `<option value="${opt}">${opt}</option>`).join('');
@@ -852,6 +853,7 @@ const renderTransactions = async () => {
                     $${t.amount.toFixed(2)}
                 </td>
                 <td>
+                    <button class="btn-secondary" onclick="window.editTx('${t.id}')" style="color: var(--text-accent); border-color: rgba(122, 162, 247, 0.5); padding: 0.4rem 0.8rem; font-size: 0.8rem; margin-right: 0.5rem;">Edit</button>
                     <button class="btn-secondary" onclick="window.deleteTx('${t.id}')" style="color: var(--text-error); border-color: rgba(247, 118, 142, 0.5); padding: 0.4rem 0.8rem; font-size: 0.8rem;">Delete</button>
                 </td>
             </tr>
@@ -869,8 +871,52 @@ const renderTransactions = async () => {
 
     // Handlers
     const form = document.getElementById('manual-tx-form');
+    let editingTransactionId = null;
+
+    window.editTx = async (id) => {
+        // Find transaction
+        // Since we have filteredTxs in scope, we might find it there, but better to fetch from DB or use the list we have if complete.
+        // filteredTxs might not have all fields if we optimized, but here it does.
+        // However, ID is string in HTML, might be number in DB.
+        const tx = transactions.find(t => t.id == id);
+        if (!tx) return;
+
+        editingTransactionId = tx.id;
+
+        // Populate Form
+        document.getElementById('new-date').value = tx.date;
+        document.getElementById('new-merchant').value = tx.merchant;
+        document.getElementById('new-type').value = tx.type;
+        document.getElementById('new-amount').value = tx.amount;
+        document.getElementById('new-category').value = tx.category || 'Uncategorized';
+
+        // Handle Account
+        const accSelect = document.getElementById('new-account');
+        if (tx.accountId) accSelect.value = tx.accountId;
+
+        // Handle Transfer
+        window.toggleNewTxFields(); // Update visibility based on type
+        if (tx.type === 'Transfer' && tx.toAccountId) {
+            document.getElementById('new-to-account').value = tx.toAccountId;
+        }
+
+        // Update UI
+        document.getElementById('btn-save-tx').innerText = 'Update Transaction';
+        document.querySelector('#manual-tx-form h3').innerText = 'Edit Transaction';
+        form.classList.remove('hidden');
+        form.scrollIntoView({ behavior: 'smooth' });
+    };
 
     document.getElementById('btn-show-add-tx').onclick = () => {
+        editingTransactionId = null;
+        document.getElementById('btn-save-tx').innerText = 'Save Transaction';
+        document.querySelector('#manual-tx-form h3').innerText = 'Add New Transaction';
+
+        // Clear form
+        document.getElementById('new-date').value = new Date().toISOString().split('T')[0];
+        document.getElementById('new-merchant').value = '';
+        document.getElementById('new-amount').value = '';
+
         form.classList.remove('hidden');
     };
 
@@ -903,7 +949,30 @@ const renderTransactions = async () => {
             return;
         }
 
-        await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.username });
+        if (editingTransactionId) {
+            // Update
+            const tx = transactions.find(t => t.id == editingTransactionId);
+            if (tx) {
+                const updatedTx = {
+                    ...tx,
+                    date, amount, merchant, type, accountId, toAccountId, category,
+                    // Ensure we keep firestoreId if it exists
+                };
+                await import('./db.js').then(m => m.updateTransaction(updatedTx));
+
+                // Trigger sync to push update
+                import('./firestore.js').then(m => m.backupToFirestore(user.uid));
+            }
+        } else {
+            // Add New
+            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.uid });
+        }
+
+        // Reset and Reload
+        editingTransactionId = null;
+        document.getElementById('btn-save-tx').innerText = 'Save Transaction';
+        document.querySelector('#manual-tx-form h3').innerText = 'Add New Transaction';
+        form.classList.add('hidden');
         renderTransactions();
     };
 
@@ -950,7 +1019,7 @@ const renderTransactions = async () => {
 // --- Accounts View ---
 const renderAccounts = async () => {
     const user = getCurrentUser();
-    const transactions = await getAllTransactions(user.username);
+    const transactions = await getAllTransactions(user.uid);
     const main = document.getElementById('main-content');
 
     // Calculate Net Movement per account
@@ -1113,7 +1182,18 @@ const renderSettings = () => {
 
 
 const renderAdmin = async () => {
-    const users = await getAllUsers();
+    // We need to fetch all users from Firestore, not local DB, to manage roles
+    // But `getAllUsers` in `db.js` is local. 
+    // We need a new function in `firestore.js` to get all users (if allowed by rules).
+    // For now, let's assume we can list users. 
+    // Wait, Firestore client SDK doesn't support "list users" easily without a collection query.
+    // And our rules might block it unless we are admin.
+    // Let's add `getAllUsersFromFirestore` in `firestore.js`.
+
+    // Importing dynamically to avoid circular dependency issues if any, or just assume it's available.
+    // Ideally we should import at top.
+
+    const users = await getAllUsersFromFirestore();
     const main = document.getElementById('main-content');
 
     let html = `
@@ -1125,7 +1205,7 @@ const renderAdmin = async () => {
         <table>
             <thead>
                 <tr>
-                    <th>Username</th>
+                    <th>Email</th>
                     <th>Role</th>
                     <th>Actions</th>
                 </tr>
@@ -1133,17 +1213,27 @@ const renderAdmin = async () => {
             <tbody>
     `;
 
-    users.forEach(u => {
-        html += `
-        <tr>
-            <td>${u.username}</td>
-            <td>${u.role}</td>
-            <td>
-                ${u.role !== 'admin' ? `<button class="btn-secondary" onclick="window.deleteUserBtn('${u.username}')" style="color: var(--text-error); border-color: rgba(247, 118, 142, 0.5);">Delete</button>` : '-'}
-            </td>
-        </tr>
-        `;
-    });
+    if (users) {
+        users.forEach(u => {
+            const isSelf = u.uid === getCurrentUser().uid;
+            html += `
+            <tr>
+                <td>${u.email}</td>
+                <td>
+                    <select onchange="window.changeUserRole('${u.uid}', this.value)" ${isSelf ? 'disabled' : ''}>
+                        <option value="user" ${u.role === 'user' ? 'selected' : ''}>User</option>
+                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+                    </select>
+                </td>
+                <td>
+                    ${!isSelf ? `<button class="btn-secondary" onclick="window.deleteUserBtn('${u.uid}')" style="color: var(--text-error); border-color: rgba(247, 118, 142, 0.5);">Delete</button>` : '<span style="color: var(--text-muted);">Current User</span>'}
+                </td>
+            </tr>
+            `;
+        });
+    } else {
+        html += '<tr><td colspan="3">No users found or permission denied.</td></tr>';
+    }
 
     html += `
             </tbody>
@@ -1153,10 +1243,23 @@ const renderAdmin = async () => {
 
     main.innerHTML = html;
 
-    window.deleteUserBtn = async (username) => {
-        if (confirm(`Delete user "${username}"?`)) {
-            await deleteUser(username);
-            renderAdmin();
+    window.changeUserRole = async (uid, newRole) => {
+        if (confirm(`Change role to ${newRole}?`)) {
+            const success = await updateUserRole(uid, newRole);
+            if (success) {
+                alert('Role updated successfully.');
+            } else {
+                alert('Failed to update role.');
+            }
+        } else {
+            renderAdmin(); // Revert selection
+        }
+    };
+
+    window.deleteUserBtn = async (uid) => {
+        if (confirm(`Delete user? This cannot be undone.`)) {
+            // await deleteUser(uid); // Need firestore delete
+            alert("Delete not implemented yet for safety.");
         }
     };
 };

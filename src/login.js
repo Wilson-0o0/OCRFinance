@@ -1,12 +1,12 @@
 import { login, signup, initAuth, getCurrentUser } from './modules/auth.js';
 
 // Initialize auth state
-initAuth();
-
-// Redirect if already logged in
-if (getCurrentUser()) {
-    window.location.href = '/';
-}
+// Initialize auth state and redirect if logged in
+initAuth((user) => {
+    if (user) {
+        window.location.href = '/';
+    }
+});
 
 const loginForm = document.getElementById('login-form');
 const signupForm = document.getElementById('signup-form');
@@ -28,35 +28,37 @@ linkLogin.addEventListener('click', (e) => {
 
 // Login Handler
 document.getElementById('btn-login').addEventListener('click', async () => {
-    const username = document.getElementById('login-username').value;
+    const email = document.getElementById('login-email').value;
     const password = document.getElementById('login-password').value;
     const remember = document.getElementById('login-remember').checked;
 
-    if (!username || !password) {
-        alert('Please enter both username and password');
+    if (!email || !password) {
+        alert('Please enter both email and password');
         return;
     }
 
-    const success = await login(username, password, remember);
-    if (success) {
-        window.location.href = '/';
-    } else {
-        alert('Invalid credentials');
+    try {
+        const success = await login(email, password, remember);
+        if (success) {
+            window.location.href = '/';
+        }
+    } catch (err) {
+        alert('Login failed: ' + err.message);
     }
 });
 
 // Signup Handler
 document.getElementById('btn-signup').addEventListener('click', async () => {
-    const username = document.getElementById('signup-username').value;
+    const email = document.getElementById('signup-email').value;
     const password = document.getElementById('signup-password').value;
 
-    if (!username || !password) {
-        alert('Please enter both username and password');
+    if (!email || !password) {
+        alert('Please enter both email and password');
         return;
     }
 
     try {
-        await signup(username, password);
+        await signup(email, password);
         window.location.href = '/';
     } catch (err) {
         alert(err.message);

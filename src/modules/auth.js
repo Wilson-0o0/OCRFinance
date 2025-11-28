@@ -1,54 +1,82 @@
-import { registerUser, findUser, getAllUsers } from './db.js';
+import { auth } from '../firebase-config.js';
+import {
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+} from 'firebase/auth';
+import { syncData, getUserRole, saveUserToFirestore } from './firestore.js';
 
 let currentUser = null;
 
-export const initAuth = () => {
-    const localUser = localStorage.getItem('ocr_user');
-    const sessionUser = sessionStorage.getItem('ocr_user');
-
-    if (localUser) {
-        currentUser = JSON.parse(localUser);
-    } else if (sessionUser) {
-        currentUser = JSON.parse(sessionUser);
-    }
-};
-
 export const getCurrentUser = () => currentUser;
 
-export const login = async (username, password, remember = false) => {
-    const user = await findUser(username);
-    if (user && user.password === password) {
-        currentUser = { username: user.username, role: user.role };
-        if (remember) {
-            localStorage.setItem('ocr_user', JSON.stringify(currentUser));
+export const initAuth = (onAuthReady) => {
+    onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            // Fetch role from Firestore
+            let role = 'user';
+            try {
+                const userDoc = await getUserRole(user.uid);
+                if (userDoc) {
+                    role = userDoc.role;
+                } else {
+                    // Create user doc if not exists
+                    await saveUserToFirestore({
+                        uid: user.uid,
+                        email: user.email,
+                        role: 'user',
+                        username: user.email.split('@')[0]
+                    });
+                }
+            } catch (e) {
+                console.error("Error fetching role:", e);
+            }
+
+            currentUser = {
+                uid: user.uid,
+                email: user.email,
+                username: user.email.split('@')[0],
+                role: role
+            };
+            console.log("User logged in:", currentUser.email, "Role:", role);
+            // Start sync when user is authenticated
+            syncData(currentUser.uid);
         } else {
-            sessionStorage.setItem('ocr_user', JSON.stringify(currentUser));
+            currentUser = null;
+            console.log("User logged out");
         }
+
+        if (onAuthReady) {
+            onAuthReady(currentUser);
+        }
+    });
+};
+
+export const login = async (email, password) => {
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
         return true;
+    } catch (error) {
+        console.error("Login error:", error);
+        throw error;
     }
-    return false;
 };
 
-export const signup = async (username, password) => {
-    const existing = await findUser(username);
-    if (existing) {
-        throw new Error('Username already exists');
+export const signup = async (email, password) => {
+    try {
+        await createUserWithEmailAndPassword(auth, email, password);
+        return true;
+    } catch (error) {
+        console.error("Signup error:", error);
+        throw error;
     }
-
-    const allUsers = await getAllUsers();
-    const role = allUsers.length === 0 ? 'admin' : 'user';
-
-    const newUser = { username, password, role };
-    await registerUser(newUser);
-
-    // Auto login after signup
-    currentUser = { username, role };
-    sessionStorage.setItem('ocr_user', JSON.stringify(currentUser));
-    return true;
 };
 
-export const logout = () => {
-    currentUser = null;
-    localStorage.removeItem('ocr_user');
-    sessionStorage.removeItem('ocr_user');
+export const logout = async () => {
+    try {
+        await signOut(auth);
+    } catch (error) {
+        console.error("Logout error:", error);
+    }
 };
