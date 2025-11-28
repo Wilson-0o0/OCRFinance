@@ -4,7 +4,7 @@ import { login, signup, initAuth, getCurrentUser } from './modules/auth.js';
 // Initialize auth state and redirect if logged in
 initAuth((user) => {
     if (user) {
-        window.location.href = '/';
+        window.location.href = './index.html';
     }
 });
 
@@ -40,7 +40,7 @@ document.getElementById('btn-login').addEventListener('click', async () => {
     try {
         const success = await login(email, password, remember);
         if (success) {
-            window.location.href = '/';
+            window.location.href = './index.html';
         }
     } catch (err) {
         alert('Login failed: ' + err.message);
@@ -59,7 +59,7 @@ document.getElementById('btn-signup').addEventListener('click', async () => {
 
     try {
         await signup(email, password);
-        window.location.href = '/';
+        window.location.href = './index.html';
     } catch (err) {
         alert(err.message);
     }

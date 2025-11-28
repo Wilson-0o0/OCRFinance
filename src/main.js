@@ -4,7 +4,7 @@ import { initAuth, getCurrentUser } from './modules/auth.js';
 
 initAuth((user) => {
     if (!user) {
-        window.location.href = '/login.html';
+        window.location.href = './login.html';
     } else {
         renderApp();
     }

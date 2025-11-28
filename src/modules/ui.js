@@ -60,7 +60,7 @@ export const renderApp = async () => {
 
     if (!user) {
         // Fallback safety
-        window.location.href = '/login.html';
+        window.location.href = './login.html';
         return;
     }
 
@@ -112,7 +112,7 @@ const setupNavigation = () => {
 
     document.getElementById('nav-logout').addEventListener('click', () => {
         logout();
-        window.location.href = '/login.html';
+        window.location.href = './login.html';
     });
 };
 
