@@ -41,7 +41,7 @@ export const initAuth = (onAuthReady) => {
             };
             console.log("User logged in:", currentUser.email, "Role:", role);
             // Start sync when user is authenticated
-            syncData(currentUser.uid);
+            await syncData(currentUser.uid);
         } else {
             currentUser = null;
             console.log("User logged out");

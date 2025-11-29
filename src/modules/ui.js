@@ -1,5 +1,5 @@
 import { getAllTransactions, addTransaction, deleteTransaction, checkDuplicate, getAllUsers, deleteUser } from './db.js';
-import { updateUserRole, getAllUsersFromFirestore } from './firestore.js';
+import { updateUserRole, getAllUsersFromFirestore, saveSettingsToFirestore, getSettingsFromFirestore } from './firestore.js';
 import { recognizeText } from './ocr.js';
 import { parseTransactionText } from './parser.js';
 import { initAuth, getCurrentUser, login, signup, logout } from './auth.js';
@@ -22,26 +22,43 @@ let graphViewMode = 'Category';
 let dashboardStartDate = '';
 let dashboardEndDate = '';
 
-const loadSettings = () => {
+const loadSettings = async () => {
     const user = getCurrentUser();
     if (!user) return;
 
     const prefix = `ocr_${user.uid}_`;
 
-    const savedCats = localStorage.getItem(`${prefix}categories`);
-    if (savedCats) categories = JSON.parse(savedCats);
-    else categories = ['Food', 'Transport', 'Utilities', 'Entertainment', 'Health', 'Salary', 'Transfer', 'Uncategorized']; // Reset to default if not found
+    // Try Firestore first
+    const firestoreSettings = await getSettingsFromFirestore(user.uid);
 
-    const savedAccs = localStorage.getItem(`${prefix}accounts`);
-    if (savedAccs) accounts = JSON.parse(savedAccs);
-    else accounts = ['Cash', 'Bank Account', 'Credit Card'];
+    if (firestoreSettings) {
+        categories = firestoreSettings.categories || categories;
+        accounts = firestoreSettings.accounts || accounts;
+        openingBalances = firestoreSettings.openingBalances || openingBalances;
 
-    const savedBalances = localStorage.getItem(`${prefix}opening_balances`);
-    if (savedBalances) openingBalances = JSON.parse(savedBalances);
-    else openingBalances = {};
+        // Update local storage to match
+        localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
+        localStorage.setItem(`${prefix}accounts`, JSON.stringify(accounts));
+        localStorage.setItem(`${prefix}opening_balances`, JSON.stringify(openingBalances));
+    } else {
+        // Fallback to LocalStorage (Migration or Offline)
+        const savedCats = localStorage.getItem(`${prefix}categories`);
+        if (savedCats) categories = JSON.parse(savedCats);
+
+        const savedAccs = localStorage.getItem(`${prefix}accounts`);
+        if (savedAccs) accounts = JSON.parse(savedAccs);
+
+        const savedBalances = localStorage.getItem(`${prefix}opening_balances`);
+        if (savedBalances) openingBalances = JSON.parse(savedBalances);
+
+        // If we have local data but nothing in Firestore, save to Firestore (Migration)
+        if (savedCats || savedAccs || savedBalances) {
+            await saveSettings();
+        }
+    }
 };
 
-const saveSettings = () => {
+const saveSettings = async () => {
     const user = getCurrentUser();
     if (!user) return;
 
@@ -50,6 +67,12 @@ const saveSettings = () => {
     localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
     localStorage.setItem(`${prefix}accounts`, JSON.stringify(accounts));
     localStorage.setItem(`${prefix}opening_balances`, JSON.stringify(openingBalances));
+
+    await saveSettingsToFirestore(user.uid, {
+        categories,
+        accounts,
+        openingBalances
+    });
 };
 
 // DOM Elements
@@ -87,7 +110,7 @@ export const renderApp = async () => {
   `;
 
     setupNavigation();
-    loadSettings();
+    await loadSettings();
     await renderDashboard();
 };
 

@@ -145,3 +145,26 @@ export const updateUserRole = async (uid, newRole) => {
         return false;
     }
 };
+
+export const saveSettingsToFirestore = async (uid, settings) => {
+    try {
+        const userRef = doc(db, USERS_COLLECTION, uid);
+        await setDoc(userRef, { settings }, { merge: true });
+    } catch (error) {
+        console.error("Error saving settings:", error);
+    }
+};
+
+export const getSettingsFromFirestore = async (uid) => {
+    try {
+        const userRef = doc(db, USERS_COLLECTION, uid);
+        const docSnap = await getDoc(userRef);
+        if (docSnap.exists() && docSnap.data().settings) {
+            return docSnap.data().settings;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error getting settings:", error);
+        return null;
+    }
+};
