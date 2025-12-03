@@ -3,6 +3,7 @@ import { updateUserRole, getAllUsersFromFirestore, saveSettingsToFirestore, getS
 import { recognizeText } from './ocr.js';
 import { parseTransactionText } from './parser.js';
 import { initAuth, getCurrentUser, login, signup, logout } from './auth.js';
+import { cleanupInvalidTransactions, listInvalidTransactions } from '../utils/cleanupTransactions.js';
 import Chart from 'chart.js/auto';
 
 // State
@@ -190,9 +191,9 @@ const renderDashboard = async () => {
     // Calculate totals regardless of view mode
     filteredTransactions.forEach(t => {
         if (t.type === 'Income') {
-            totalIncome += t.amount;
+            totalIncome += (t.amount ?? 0);
         } else if (t.type === 'Expense') {
-            totalExpense += t.amount;
+            totalExpense += (t.amount ?? 0);
         }
     });
 
@@ -213,7 +214,7 @@ const renderDashboard = async () => {
         filteredTransactions.forEach(t => {
             if (t.type === 'Expense') {
                 const cat = t.category || 'Uncategorized';
-                chartData[cat] = (chartData[cat] || 0) + t.amount;
+                chartData[cat] = (chartData[cat] || 0) + (t.amount ?? 0);
             }
         });
     } else if (graphViewMode === 'Account') {
@@ -221,7 +222,7 @@ const renderDashboard = async () => {
         chartType = 'bar';
         filteredTransactions.forEach(t => {
             if (t.accountId) {
-                let amount = t.amount;
+                let amount = t.amount ?? 0;
                 if (t.type === 'Expense') amount = -amount;
                 if (t.type === 'Transfer' && t.toAccountId) {
                     // For transfer, we could show net flow, but for simplicity let's just show impact on primary account
@@ -235,7 +236,7 @@ const renderDashboard = async () => {
         chartType = 'doughnut';
         filteredTransactions.forEach(t => {
             if (t.type === 'Expense') {
-                chartData[t.merchant] = (chartData[t.merchant] || 0) + t.amount;
+                chartData[t.merchant] = (chartData[t.merchant] || 0) + (t.amount ?? 0);
             }
         });
         // Sort and limit to top 10
@@ -245,7 +246,7 @@ const renderDashboard = async () => {
         chartLabel = 'Transactions by Type';
         chartType = 'pie';
         filteredTransactions.forEach(t => {
-            chartData[t.type] = (chartData[t.type] || 0) + t.amount;
+            chartData[t.type] = (chartData[t.type] || 0) + (t.amount ?? 0);
         });
     } else if (graphViewMode === 'Time') {
         chartLabel = 'Transaction Volume Over Time';
@@ -254,7 +255,7 @@ const renderDashboard = async () => {
         const timeData = {};
         filteredTransactions.forEach(t => {
             const date = t.date;
-            timeData[date] = (timeData[date] || 0) + t.amount;
+            timeData[date] = (timeData[date] || 0) + (t.amount ?? 0);
         });
         // Sort by date
         const sortedKeys = Object.keys(timeData).sort((a, b) => new Date(a) - new Date(b));
@@ -873,7 +874,7 @@ const renderTransactions = async () => {
                 <td>${t.category || '<span style="color: var(--text-muted);">-</span>'}</td>
                 <td>${t.accountId || '<span style="color: var(--text-muted);">-</span>'}</td>
                 <td style="font-weight: 600; font-family: monospace; font-size: 1rem; color: ${t.type === 'Income' ? 'var(--text-success)' : (t.type === 'Expense' ? 'var(--text-error)' : 'var(--text-purple)')}">
-                    $${t.amount.toFixed(2)}
+                    $${(t.amount ?? 0).toFixed(2)}
                 </td>
                 <td>
                     <button class="btn-secondary" onclick="window.editTx('${t.id}')" style="color: var(--text-accent); border-color: rgba(122, 162, 247, 0.5); padding: 0.4rem 0.8rem; font-size: 0.8rem; margin-right: 0.5rem;">Edit</button>
@@ -1051,12 +1052,12 @@ const renderAccounts = async () => {
 
     transactions.forEach(t => {
         if (t.type === 'Income' && t.accountId) {
-            movements[t.accountId] = (movements[t.accountId] || 0) + t.amount;
+            movements[t.accountId] = (movements[t.accountId] || 0) + (t.amount ?? 0);
         } else if (t.type === 'Expense' && t.accountId) {
-            movements[t.accountId] = (movements[t.accountId] || 0) - t.amount;
+            movements[t.accountId] = (movements[t.accountId] || 0) - (t.amount ?? 0);
         } else if (t.type === 'Transfer') {
-            if (t.accountId) movements[t.accountId] = (movements[t.accountId] || 0) - t.amount;
-            if (t.toAccountId) movements[t.toAccountId] = (movements[t.toAccountId] || 0) + t.amount;
+            if (t.accountId) movements[t.accountId] = (movements[t.accountId] || 0) - (t.amount ?? 0);
+            if (t.toAccountId) movements[t.toAccountId] = (movements[t.toAccountId] || 0) + (t.amount ?? 0);
         }
     });
 
@@ -1178,6 +1179,16 @@ const renderSettings = () => {
     html += `
         </ul>
     </div>
+    
+    <div class="card" style="margin-top: 1.5rem;">
+        <h3>Database Maintenance</h3>
+        <p style="color: var(--text-muted); margin-bottom: 1rem;">Clean up invalid or corrupted transaction data.</p>
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <button id="btn-list-invalid" class="btn-secondary">List Invalid Transactions</button>
+            <button id="btn-cleanup-invalid" class="btn" style="background: var(--text-error); border-color: var(--text-error);">Delete Invalid Transactions</button>
+        </div>
+        <div id="cleanup-status" style="margin-top: 1rem; padding: 1rem; border-radius: 8px; display: none;"></div>
+    </div>
     `;
 
     main.innerHTML = html;
@@ -1198,6 +1209,68 @@ const renderSettings = () => {
             categories = categories.filter(c => c !== cat);
             saveSettings();
             renderSettings();
+        }
+    };
+
+    // Database cleanup handlers
+    const statusDiv = document.getElementById('cleanup-status');
+
+    document.getElementById('btn-list-invalid').onclick = async () => {
+        statusDiv.style.display = 'block';
+        statusDiv.style.background = 'var(--bg-input)';
+        statusDiv.style.border = '1px solid var(--border-color)';
+        statusDiv.innerHTML = '<p style="color: var(--text-muted);">Scanning database...</p>';
+
+        const invalidTxs = await listInvalidTransactions();
+
+        if (invalidTxs.length === 0) {
+            statusDiv.style.background = 'rgba(158, 206, 106, 0.1)';
+            statusDiv.style.border = '1px solid var(--text-success)';
+            statusDiv.innerHTML = `
+                <p style="color: var(--text-success); font-weight: 600;">✅ Database is clean!</p>
+                <p style="color: var(--text-muted); font-size: 0.9rem;">No invalid transactions found.</p>
+            `;
+        } else {
+            statusDiv.style.background = 'rgba(247, 118, 142, 0.1)';
+            statusDiv.style.border = '1px solid var(--text-error)';
+            statusDiv.innerHTML = `
+                <p style="color: var(--text-error); font-weight: 600;">⚠️ Found ${invalidTxs.length} invalid transaction(s)</p>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">Check the browser console for details.</p>
+            `;
+        }
+    };
+
+    document.getElementById('btn-cleanup-invalid').onclick = async () => {
+        statusDiv.style.display = 'block';
+        statusDiv.style.background = 'var(--bg-input)';
+        statusDiv.style.border = '1px solid var(--border-color)';
+        statusDiv.innerHTML = '<p style="color: var(--text-muted);">Processing cleanup...</p>';
+
+        const result = await cleanupInvalidTransactions();
+
+        if (result.success && result.deletedCount > 0) {
+            statusDiv.style.background = 'rgba(158, 206, 106, 0.1)';
+            statusDiv.style.border = '1px solid var(--text-success)';
+            statusDiv.innerHTML = `
+                <p style="color: var(--text-success); font-weight: 600;">✅ Cleanup successful!</p>
+                <p style="color: var(--text-muted); font-size: 0.9rem;">Deleted ${result.deletedCount} from IndexedDB and ${result.firestoreDeletedCount || 0} from Firestore.</p>
+            `;
+
+            // Refresh views if needed
+            if (currentView === 'transactions') renderTransactions();
+            if (currentView === 'dashboard') renderDashboard();
+        } else if (result.success && result.deletedCount === 0) {
+            statusDiv.style.background = 'rgba(158, 206, 106, 0.1)';
+            statusDiv.style.border = '1px solid var(--text-success)';
+            statusDiv.innerHTML = `
+                <p style="color: var(--text-success); font-weight: 600;">✅ ${result.message}</p>
+            `;
+        } else {
+            statusDiv.style.background = 'rgba(247, 118, 142, 0.1)';
+            statusDiv.style.border = '1px solid var(--text-error)';
+            statusDiv.innerHTML = `
+                <p style="color: var(--text-error); font-weight: 600;">❌ ${result.message || 'Cleanup failed'}</p>
+            `;
         }
     };
 };
