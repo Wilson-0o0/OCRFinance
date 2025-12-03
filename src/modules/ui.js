@@ -99,6 +99,7 @@ export const renderApp = async () => {
         <button id="nav-dashboard" class="active">Dashboard</button>
         <button id="nav-upload">Upload & Scan</button>
         <button id="nav-transactions">Transactions</button>
+        <button id="nav-installments">Installments</button>
         <button id="nav-accounts">Accounts</button>
         <button id="nav-settings">Settings</button>
         ${user.role === 'admin' ? '<button id="nav-admin">Admin</button>' : ''}
@@ -116,7 +117,7 @@ export const renderApp = async () => {
 };
 
 const setupNavigation = () => {
-    const navs = ['dashboard', 'upload', 'transactions', 'accounts', 'settings'];
+    const navs = ['dashboard', 'upload', 'transactions', 'installments', 'accounts', 'settings'];
     const user = getCurrentUser();
 
     if (user.role === 'admin') {
@@ -159,6 +160,9 @@ const renderView = async () => {
         case 'transactions':
             await renderTransactions();
             break;
+        case 'installments':
+            await renderInstallments();
+            break;
         case 'accounts':
             await renderAccounts();
             break;
@@ -178,11 +182,52 @@ const renderDashboard = async () => {
     const main = document.getElementById('main-content');
 
     // Filter transactions for Dashboard
-    const filteredTransactions = transactions.filter(t => {
-        if (dashboardStartDate && t.date < dashboardStartDate) return false;
-        if (dashboardEndDate && t.date > dashboardEndDate) return false;
-        return true;
+    // We need to process Installments specially.
+    // Instead of simple filter, we will generate a list of "effective daily transactions" for the dashboard range.
+
+    let processedTransactions = [];
+
+    const dashboardStart = dashboardStartDate ? new Date(dashboardStartDate) : null;
+    const dashboardEnd = dashboardEndDate ? new Date(dashboardEndDate) : null;
+
+    transactions.forEach(t => {
+        if (t.type === 'Installment') {
+            const start = new Date(t.date);
+            const end = t.endDate ? new Date(t.endDate) : new Date(); // Default to today if active
+
+            // Calculate daily amount
+            const diffTime = Math.abs(end - start);
+            const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+            const dailyAmount = t.amount / Math.max(1, days);
+
+            // Iterate days
+            for (let d = 0; d < days; d++) {
+                const currentDay = new Date(start);
+                currentDay.setDate(start.getDate() + d);
+                const currentDayStr = currentDay.toISOString().split('T')[0];
+
+                // Check if this day is within dashboard filter
+                if (dashboardStart && currentDay < dashboardStart) continue;
+                if (dashboardEnd && currentDay > dashboardEnd) continue;
+
+                // Create a virtual transaction for this day
+                processedTransactions.push({
+                    ...t,
+                    date: currentDayStr,
+                    amount: dailyAmount,
+                    originalAmount: t.amount,
+                    isInstallmentSplit: true
+                });
+            }
+        } else {
+            // Normal transaction
+            if (dashboardStartDate && t.date < dashboardStartDate) return;
+            if (dashboardEndDate && t.date > dashboardEndDate) return;
+            processedTransactions.push(t);
+        }
     });
+
+    const filteredTransactions = processedTransactions;
 
     // Calculate totals
     let totalIncome = 0;
@@ -192,7 +237,7 @@ const renderDashboard = async () => {
     filteredTransactions.forEach(t => {
         if (t.type === 'Income') {
             totalIncome += (t.amount ?? 0);
-        } else if (t.type === 'Expense') {
+        } else if (t.type === 'Expense' || t.type === 'Installment') {
             totalExpense += (t.amount ?? 0);
         }
     });
@@ -212,7 +257,7 @@ const renderDashboard = async () => {
         chartLabel = 'Expenses by Category';
         chartType = 'doughnut';
         filteredTransactions.forEach(t => {
-            if (t.type === 'Expense') {
+            if (t.type === 'Expense' || t.type === 'Installment') {
                 const cat = t.category || 'Uncategorized';
                 chartData[cat] = (chartData[cat] || 0) + (t.amount ?? 0);
             }
@@ -223,7 +268,7 @@ const renderDashboard = async () => {
         filteredTransactions.forEach(t => {
             if (t.accountId) {
                 let amount = t.amount ?? 0;
-                if (t.type === 'Expense') amount = -amount;
+                if (t.type === 'Expense' || t.type === 'Installment') amount = -amount;
                 if (t.type === 'Transfer' && t.toAccountId) {
                     // For transfer, we could show net flow, but for simplicity let's just show impact on primary account
                     amount = -amount;
@@ -235,7 +280,7 @@ const renderDashboard = async () => {
         chartLabel = 'Top Merchants (Expenses)';
         chartType = 'doughnut';
         filteredTransactions.forEach(t => {
-            if (t.type === 'Expense') {
+            if (t.type === 'Expense' || t.type === 'Installment') {
                 chartData[t.merchant] = (chartData[t.merchant] || 0) + (t.amount ?? 0);
             }
         });
@@ -816,11 +861,14 @@ const renderTransactions = async () => {
             <label>Date <input type="date" id="new-date" value="${new Date().toISOString().split('T')[0]}"></label>
             <label>Merchant <input type="text" id="new-merchant" placeholder="e.g. Grocery Store"></label>
             
+            <label id="lbl-end-date" style="display: none;">End Date <input type="date" id="new-end-date" title="Leave blank for active installment"></label>
+            
             <label>Type 
                 <select id="new-type" onchange="toggleNewTxFields()">
                     <option value="Expense">Expense</option>
                     <option value="Income">Income</option>
                     <option value="Transfer">Transfer</option>
+                    <option value="Installment">Installment</option>
                 </select>
             </label>
             
@@ -870,6 +918,13 @@ const renderTransactions = async () => {
                 <td style="font-weight: 500; color: var(--text-main);">${t.merchant}</td>
                 <td>
                     <span class="badge ${t.type.toLowerCase()}">${t.type}</span>
+                    ${t.type === 'Installment' ? (() => {
+                    const start = new Date(t.date);
+                    const end = t.endDate ? new Date(t.endDate) : new Date();
+                    const diffTime = Math.abs(end - start);
+                    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+                    return `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">${t.endDate ? `Split over ${days} days` : `Active (${days} days)`}</div>`;
+                })() : ''}
                 </td>
                 <td>${t.category || '<span style="color: var(--text-muted);">-</span>'}</td>
                 <td>${t.accountId || '<span style="color: var(--text-muted);">-</span>'}</td>
@@ -913,6 +968,7 @@ const renderTransactions = async () => {
         document.getElementById('new-type').value = tx.type;
         document.getElementById('new-amount').value = tx.amount;
         document.getElementById('new-category').value = tx.category || 'Uncategorized';
+        document.getElementById('new-end-date').value = tx.endDate || '';
 
         // Handle Account
         const accSelect = document.getElementById('new-account');
@@ -938,6 +994,7 @@ const renderTransactions = async () => {
 
         // Clear form
         document.getElementById('new-date').value = new Date().toISOString().split('T')[0];
+        document.getElementById('new-end-date').value = '';
         document.getElementById('new-merchant').value = '';
         document.getElementById('new-amount').value = '';
 
@@ -951,8 +1008,12 @@ const renderTransactions = async () => {
     window.toggleNewTxFields = () => {
         const type = document.getElementById('new-type').value;
         const isTransfer = type === 'Transfer';
+        const isInstallment = type === 'Installment';
+
         document.getElementById('lbl-new-to-account').style.display = isTransfer ? 'block' : 'none';
         document.getElementById('lbl-new-account').childNodes[0].textContent = isTransfer ? 'From Account: ' : 'Account: ';
+
+        document.getElementById('lbl-end-date').style.display = isInstallment ? 'block' : 'none';
     };
 
     document.getElementById('btn-save-tx').onclick = async () => {
@@ -962,6 +1023,7 @@ const renderTransactions = async () => {
         const amount = parseFloat(document.getElementById('new-amount').value);
         const accountId = document.getElementById('new-account').value;
         const category = document.getElementById('new-category').value;
+        const endDate = document.getElementById('new-end-date').value;
 
         let toAccountId = null;
         if (type === 'Transfer') {
@@ -979,7 +1041,7 @@ const renderTransactions = async () => {
             if (tx) {
                 const updatedTx = {
                     ...tx,
-                    date, amount, merchant, type, accountId, toAccountId, category,
+                    date, amount, merchant, type, accountId, toAccountId, category, endDate,
                     // Ensure we keep firestoreId if it exists
                 };
                 await import('./db.js').then(m => m.updateTransaction(updatedTx));
@@ -989,7 +1051,7 @@ const renderTransactions = async () => {
             }
         } else {
             // Add New
-            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.uid });
+            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, endDate, username: user.uid });
         }
 
         // Reset and Reload
@@ -1037,6 +1099,104 @@ const renderTransactions = async () => {
         txFilterCategory = '';
         txFilterAccount = '';
         renderTransactions();
+    };
+};
+
+// --- Installments View ---
+const renderInstallments = async () => {
+    const user = getCurrentUser();
+    const transactions = await getAllTransactions(user.uid);
+    const main = document.getElementById('main-content');
+
+    const installments = transactions.filter(t => t.type === 'Installment');
+    const activeInstallments = installments.filter(t => !t.endDate);
+    const completedInstallments = installments.filter(t => t.endDate);
+
+    const calculateDaily = (t) => {
+        const start = new Date(t.date);
+        const end = t.endDate ? new Date(t.endDate) : new Date();
+        const diffTime = Math.abs(end - start);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Inclusive
+        return (t.amount / Math.max(1, diffDays)).toFixed(2);
+    };
+
+    let html = `
+    <header>
+        <h1>Installments Management</h1>
+    </header>
+    
+    <div class="card" style="margin-bottom: 2rem;">
+        <h3 style="color: var(--text-success); margin-bottom: 1rem;">Active Installments</h3>
+        ${activeInstallments.length === 0 ? '<p style="color: var(--text-muted);">No active installments.</p>' : ''}
+        <div style="display: grid; gap: 1rem;">
+    `;
+
+    activeInstallments.forEach(t => {
+        const daily = calculateDaily(t);
+        html += `
+        <div style="background: var(--bg-input); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div>
+                <div style="font-weight: bold; font-size: 1.1rem;">${t.merchant}</div>
+                <div style="color: var(--text-muted); font-size: 0.9rem;">Started: ${t.date}</div>
+                <div style="margin-top: 0.5rem;">Total: $${parseFloat(t.amount).toFixed(2)}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 0.9rem; color: var(--text-muted);">Current Daily Average</div>
+                <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-purple);">$${daily} / day</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">Running for ${Math.ceil(Math.abs(new Date() - new Date(t.date)) / (1000 * 60 * 60 * 24)) + 1} days</div>
+            </div>
+            <button class="btn-secondary" onclick="window.stopInstallment('${t.id}')" style="color: var(--text-error); border-color: var(--text-error);">Stop (End Today)</button>
+        </div>
+        `;
+    });
+
+    html += `
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="color: var(--text-muted); margin-bottom: 1rem;">Completed Installments</h3>
+        ${completedInstallments.length === 0 ? '<p style="color: var(--text-muted);">No completed installments.</p>' : ''}
+        <div style="display: grid; gap: 1rem;">
+    `;
+
+    completedInstallments.forEach(t => {
+        const daily = calculateDaily(t);
+        html += `
+        <div style="background: var(--bg-input); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; opacity: 0.7;">
+            <div>
+                <div style="font-weight: bold;">${t.merchant}</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">${t.date} - ${t.endDate}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Final Daily Average</div>
+                <div style="font-weight: bold;">$${daily} / day</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Split over ${Math.ceil(Math.abs(new Date(t.endDate) - new Date(t.date)) / (1000 * 60 * 60 * 24)) + 1} days</div>
+            </div>
+        </div>
+        `;
+    });
+
+    html += `
+        </div>
+    </div>
+    `;
+
+    main.innerHTML = html;
+
+    window.stopInstallment = async (id) => {
+        if (confirm('Are you sure you want to stop this installment? The end date will be set to today.')) {
+            const tx = transactions.find(t => t.id == id);
+            if (tx) {
+                const today = new Date().toISOString().split('T')[0];
+                const updatedTx = { ...tx, endDate: today };
+
+                await import('./db.js').then(m => m.updateTransaction(updatedTx));
+                await import('./firestore.js').then(m => m.backupToFirestore(user.uid));
+
+                renderInstallments();
+            }
+        }
     };
 };
 
