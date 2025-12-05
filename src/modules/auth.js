@@ -3,7 +3,9 @@ import {
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signOut,
-    onAuthStateChanged
+
+    onAuthStateChanged,
+    updatePassword
 } from 'firebase/auth';
 import { syncData, getUserRole, saveUserToFirestore } from './firestore.js';
 
@@ -78,5 +80,18 @@ export const logout = async () => {
         await signOut(auth);
     } catch (error) {
         console.error("Logout error:", error);
+    }
+};
+
+export const changeUserPassword = async (newPassword) => {
+    try {
+        if (auth.currentUser) {
+            await updatePassword(auth.currentUser, newPassword);
+            return { success: true };
+        }
+        return { success: false, error: "No user logged in" };
+    } catch (error) {
+        console.error("Change password error:", error);
+        return { success: false, error: error.message };
     }
 };

@@ -2,7 +2,7 @@ import { getAllTransactions, addTransaction, deleteTransaction, checkDuplicate, 
 import { updateUserRole, getAllUsersFromFirestore, saveSettingsToFirestore, getSettingsFromFirestore } from './firestore.js';
 import { recognizeText } from './ocr.js';
 import { parseTransactionText } from './parser.js';
-import { initAuth, getCurrentUser, login, signup, logout } from './auth.js';
+import { initAuth, getCurrentUser, login, signup, logout, changeUserPassword } from './auth.js';
 import { cleanupInvalidTransactions, listInvalidTransactions } from '../utils/cleanupTransactions.js';
 import Chart from 'chart.js/auto';
 
@@ -22,6 +22,11 @@ let txFilterAccount = '';
 let graphViewMode = 'Category';
 let dashboardStartDate = '';
 let dashboardEndDate = '';
+let currency = '$';
+let dateFormat = 'YYYY-MM-DD';
+let theme = 'tokyo-night';
+let budgetLimits = {}; // { "CategoryName": 500 }
+let categoryTypes = {}; // { "CategoryName": "Expense" }
 
 const loadSettings = async () => {
     const user = getCurrentUser();
@@ -36,6 +41,11 @@ const loadSettings = async () => {
         categories = firestoreSettings.categories || categories;
         accounts = firestoreSettings.accounts || accounts;
         openingBalances = firestoreSettings.openingBalances || openingBalances;
+        currency = firestoreSettings.currency || currency;
+        dateFormat = firestoreSettings.dateFormat || dateFormat;
+        theme = firestoreSettings.theme || theme;
+        budgetLimits = firestoreSettings.budgetLimits || budgetLimits;
+        categoryTypes = firestoreSettings.categoryTypes || categoryTypes;
 
         // Update local storage to match
         localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
@@ -52,11 +62,29 @@ const loadSettings = async () => {
         const savedBalances = localStorage.getItem(`${prefix}opening_balances`);
         if (savedBalances) openingBalances = JSON.parse(savedBalances);
 
+        const savedCurrency = localStorage.getItem(`${prefix}currency`);
+        if (savedCurrency) currency = savedCurrency;
+
+        const savedDateFormat = localStorage.getItem(`${prefix}dateFormat`);
+        if (savedDateFormat) dateFormat = savedDateFormat;
+
+        const savedTheme = localStorage.getItem(`${prefix}theme`);
+        if (savedTheme) theme = savedTheme;
+
+        const savedBudget = localStorage.getItem(`${prefix}budgetLimits`);
+        if (savedBudget) budgetLimits = JSON.parse(savedBudget);
+
+        const savedTypes = localStorage.getItem(`${prefix}categoryTypes`);
+        if (savedTypes) categoryTypes = JSON.parse(savedTypes);
+
         // If we have local data but nothing in Firestore, save to Firestore (Migration)
         if (savedCats || savedAccs || savedBalances) {
             await saveSettings();
         }
     }
+
+    // Apply Theme
+    document.documentElement.setAttribute('data-theme', theme);
 };
 
 const saveSettings = async () => {
@@ -72,12 +100,32 @@ const saveSettings = async () => {
     await saveSettingsToFirestore(user.uid, {
         categories,
         accounts,
-        openingBalances
+        openingBalances,
+        currency,
+        dateFormat,
+        theme,
+        budgetLimits,
+        categoryTypes
     });
 };
 
 // DOM Elements
 const app = document.getElementById('app');
+
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    if (dateFormat === 'MM/DD/YYYY') {
+        return `${month}/${day}/${year}`;
+    } else if (dateFormat === 'DD/MM/YYYY') {
+        return `${day}/${month}/${year}`;
+    }
+    return `${year}-${month}-${day}`; // Default YYYY-MM-DD
+};
 
 export const renderApp = async () => {
     const user = getCurrentUser();
@@ -100,9 +148,7 @@ export const renderApp = async () => {
         <button id="nav-upload">Upload & Scan</button>
         <button id="nav-transactions">Transactions</button>
         <button id="nav-installments">Installments</button>
-        <button id="nav-accounts">Accounts</button>
         <button id="nav-settings">Settings</button>
-        ${user.role === 'admin' ? '<button id="nav-admin">Admin</button>' : ''}
         <button id="nav-logout" style="margin-top: auto; border-top: 1px solid #334155;">Logout</button>
       </nav>
     </aside>
@@ -117,12 +163,8 @@ export const renderApp = async () => {
 };
 
 const setupNavigation = () => {
-    const navs = ['dashboard', 'upload', 'transactions', 'installments', 'accounts', 'settings'];
+    const navs = ['dashboard', 'upload', 'transactions', 'installments', 'settings'];
     const user = getCurrentUser();
-
-    if (user.role === 'admin') {
-        navs.push('admin');
-    }
 
     navs.forEach(view => {
         const btn = document.getElementById(`nav-${view}`);
@@ -163,14 +205,8 @@ const renderView = async () => {
         case 'installments':
             await renderInstallments();
             break;
-        case 'accounts':
-            await renderAccounts();
-            break;
         case 'settings':
             renderSettings();
-            break;
-        case 'admin':
-            renderAdmin();
             break;
     }
 };
@@ -316,16 +352,16 @@ const renderDashboard = async () => {
         <div class="dashboard-grid">
             <div class="card">
                 <h3>Net Balance</h3>
-                <p class="amount ${netBalance >= 0 ? 'positive' : 'negative'}">$${netBalance.toFixed(2)}</p>
-                <small style="color: var(--text-muted);">Includes Opening Balances: $${totalOpening.toFixed(2)}</small>
+                <p class="amount ${netBalance >= 0 ? 'positive' : 'negative'}">${currency}${netBalance.toFixed(2)}</p>
+                <small style="color: var(--text-muted);">Includes Opening Balances: ${currency}${totalOpening.toFixed(2)}</small>
             </div>
             <div class="card">
                 <h3>Total Income</h3>
-                <p class="amount positive">$${totalIncome.toFixed(2)}</p>
+                <p class="amount positive">${currency}${totalIncome.toFixed(2)}</p>
             </div>
             <div class="card">
                 <h3>Total Expenses</h3>
-                <p class="amount negative">$${totalExpense.toFixed(2)}</p>
+                <p class="amount negative">${currency}${totalExpense.toFixed(2)}</p>
             </div>
         </div>
 
@@ -607,7 +643,16 @@ const renderReviewForm = async (transactions) => {
             `<option value="${opt}" ${opt === (t.accountId || accounts[0]) ? 'selected' : ''}>${opt}</option>`
         ).join('') + '<option value="__NEW__">+ Add Account</option>';
 
-        const categoryOptions = categories.map(opt =>
+        const currentType = t.type || 'Expense';
+
+        const filteredCats = categories.filter(c => {
+            const cType = categoryTypes[c];
+            if (!cType) return true;
+            if (currentType === 'Installment') return cType === 'Expense' || cType === 'Installment';
+            return cType === currentType;
+        });
+
+        const categoryOptions = filteredCats.map(opt =>
             `<option value="${opt}" ${opt === (t.category || 'Uncategorized') ? 'selected' : ''}>${opt}</option>`
         ).join('') + '<option value="__NEW__">+ Add Category</option>';
 
@@ -681,6 +726,26 @@ const renderReviewForm = async (transactions) => {
 
         // Toggle To Account visibility
         lblToAccount.style.display = isTransfer ? 'block' : 'none';
+
+        // Update Category Options
+        const catSelect = document.getElementById(`category-${index}`);
+        const currentVal = catSelect.value;
+        const type = select.value;
+
+        const filteredCats = categories.filter(c => {
+            const cType = categoryTypes[c];
+            if (!cType) return true;
+            if (type === 'Installment') return cType === 'Expense' || cType === 'Installment';
+            return cType === type;
+        });
+
+        catSelect.innerHTML = filteredCats.map(opt => `<option value="${opt}">${opt}</option>`).join('') + '<option value="__NEW__">+ Add Category</option>';
+
+        if (filteredCats.includes(currentVal)) {
+            catSelect.value = currentVal;
+        } else if (filteredCats.length > 0) {
+            catSelect.value = filteredCats[0];
+        }
     };
 
     // Handlers for "Add New"
@@ -914,7 +979,7 @@ const renderTransactions = async () => {
         filteredTxs.forEach(t => {
             html += `
             <tr>
-                <td>${t.date}</td>
+                <td>${formatDate(t.date)}</td>
                 <td style="font-weight: 500; color: var(--text-main);">${t.merchant}</td>
                 <td>
                     <span class="badge ${t.type.toLowerCase()}">${t.type}</span>
@@ -929,7 +994,7 @@ const renderTransactions = async () => {
                 <td>${t.category || '<span style="color: var(--text-muted);">-</span>'}</td>
                 <td>${t.accountId || '<span style="color: var(--text-muted);">-</span>'}</td>
                 <td style="font-weight: 600; font-family: monospace; font-size: 1rem; color: ${t.type === 'Income' ? 'var(--text-success)' : (t.type === 'Expense' ? 'var(--text-error)' : 'var(--text-purple)')}">
-                    $${(t.amount ?? 0).toFixed(2)}
+                    ${currency}${(t.amount ?? 0).toFixed(2)}
                 </td>
                 <td>
                     <button class="btn-secondary" onclick="window.editTx('${t.id}')" style="color: var(--text-accent); border-color: rgba(122, 162, 247, 0.5); padding: 0.4rem 0.8rem; font-size: 0.8rem; margin-right: 0.5rem;">Edit</button>
@@ -975,7 +1040,7 @@ const renderTransactions = async () => {
         if (tx.accountId) accSelect.value = tx.accountId;
 
         // Handle Transfer
-        window.toggleNewTxFields(); // Update visibility based on type
+        window.toggleNewTxFields(); // Update visibility and categories
         if (tx.type === 'Transfer' && tx.toAccountId) {
             document.getElementById('new-to-account').value = tx.toAccountId;
         }
@@ -998,11 +1063,34 @@ const renderTransactions = async () => {
         document.getElementById('new-merchant').value = '';
         document.getElementById('new-amount').value = '';
 
+        // Reset type and update categories
+        document.getElementById('new-type').value = 'Expense';
+        window.toggleNewTxFields();
+
         form.classList.remove('hidden');
     };
 
     document.getElementById('btn-cancel-tx').onclick = () => {
         form.classList.add('hidden');
+    };
+
+    window.updateCategoryOptions = (type) => {
+        const catSelect = document.getElementById('new-category');
+        const currentVal = catSelect.value;
+
+        const filteredCats = categories.filter(c => {
+            const cType = categoryTypes[c] || 'Expense'; // Default to Expense
+            if (type === 'Installment') return cType === 'Expense' || cType === 'Installment';
+            return cType === type;
+        });
+
+        catSelect.innerHTML = filteredCats.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+
+        if (filteredCats.includes(currentVal)) {
+            catSelect.value = currentVal;
+        } else if (filteredCats.length > 0) {
+            catSelect.value = filteredCats[0];
+        }
     };
 
     window.toggleNewTxFields = () => {
@@ -1014,6 +1102,8 @@ const renderTransactions = async () => {
         document.getElementById('lbl-new-account').childNodes[0].textContent = isTransfer ? 'From Account: ' : 'Account: ';
 
         document.getElementById('lbl-end-date').style.display = isInstallment ? 'block' : 'none';
+
+        window.updateCategoryOptions(type);
     };
 
     document.getElementById('btn-save-tx').onclick = async () => {
@@ -1033,6 +1123,31 @@ const renderTransactions = async () => {
         if (!merchant || isNaN(amount)) {
             alert('Please fill in Merchant and Amount.');
             return;
+        }
+
+        // Budget Check
+        if (type === 'Expense' || type === 'Installment') {
+            const limit = budgetLimits[category];
+            if (limit) {
+                const now = new Date(date);
+                const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+                let currentSpent = 0;
+                transactions.forEach(t => {
+                    if (t.category === category && (t.type === 'Expense' || t.type === 'Installment')) {
+                        const tDate = new Date(t.date);
+                        if (tDate >= startOfMonth && tDate <= endOfMonth) {
+                            if (editingTransactionId && t.id == editingTransactionId) return;
+                            currentSpent += (t.amount ?? 0);
+                        }
+                    }
+                });
+
+                if (currentSpent + amount > limit) {
+                    alert(`⚠️ Budget Alert!\n\nThis transaction will exceed your monthly budget for "${category}".\n\nLimit: ${currency}${limit.toFixed(2)}\nCurrent: ${currency}${currentSpent.toFixed(2)}\nNew Total: ${currency}${(currentSpent + amount).toFixed(2)}`);
+                }
+            }
         }
 
         if (editingTransactionId) {
@@ -1137,12 +1252,12 @@ const renderInstallments = async () => {
         <div style="background: var(--bg-input); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
             <div>
                 <div style="font-weight: bold; font-size: 1.1rem;">${t.merchant}</div>
-                <div style="color: var(--text-muted); font-size: 0.9rem;">Started: ${t.date}</div>
-                <div style="margin-top: 0.5rem;">Total: $${parseFloat(t.amount).toFixed(2)}</div>
+                <div style="color: var(--text-muted); font-size: 0.9rem;">Started: ${formatDate(t.date)}</div>
+                <div style="margin-top: 0.5rem;">Total: ${currency}${parseFloat(t.amount).toFixed(2)}</div>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 0.9rem; color: var(--text-muted);">Current Daily Average</div>
-                <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-purple);">$${daily} / day</div>
+                <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-purple);">${currency}${daily} / day</div>
                 <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">Running for ${Math.ceil(Math.abs(new Date() - new Date(t.date)) / (1000 * 60 * 60 * 24)) + 1} days</div>
             </div>
             <button class="btn-secondary" onclick="window.stopInstallment('${t.id}')" style="color: var(--text-error); border-color: var(--text-error);">Stop (End Today)</button>
@@ -1166,11 +1281,11 @@ const renderInstallments = async () => {
         <div style="background: var(--bg-input); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; opacity: 0.7;">
             <div>
                 <div style="font-weight: bold;">${t.merchant}</div>
-                <div style="color: var(--text-muted); font-size: 0.8rem;">${t.date} - ${t.endDate}</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">${formatDate(t.date)} - ${formatDate(t.endDate)}</div>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 0.8rem; color: var(--text-muted);">Final Daily Average</div>
-                <div style="font-weight: bold;">$${daily} / day</div>
+                <div style="font-weight: bold;">${currency}${daily} / day</div>
                 <div style="font-size: 0.75rem; color: var(--text-muted);">Split over ${Math.ceil(Math.abs(new Date(t.endDate) - new Date(t.date)) / (1000 * 60 * 60 * 24)) + 1} days</div>
             </div>
         </div>
@@ -1200,11 +1315,101 @@ const renderInstallments = async () => {
     };
 };
 
-// --- Accounts View ---
-const renderAccounts = async () => {
+// --- Settings View ---
+let currentSettingsTab = 'general';
+
+const renderSettings = async () => {
+    const main = document.getElementById('main-content');
+    const user = getCurrentUser();
+
+    main.innerHTML = `
+    <header>
+        <h1>Settings</h1>
+    </header>
+    <div class="settings-layout">
+        <aside class="settings-sidebar">
+            <button onclick="window.switchSettingsTab('general')" id="tab-general" class="${currentSettingsTab === 'general' ? 'active' : ''}">General</button>
+            <button onclick="window.switchSettingsTab('accounts')" id="tab-accounts" class="${currentSettingsTab === 'accounts' ? 'active' : ''}">Accounts</button>
+            <button onclick="window.switchSettingsTab('categories')" id="tab-categories" class="${currentSettingsTab === 'categories' ? 'active' : ''}">Categories & Budget</button>
+            <button onclick="window.switchSettingsTab('data')" id="tab-data" class="${currentSettingsTab === 'data' ? 'active' : ''}">Data & Sync</button>
+            <button onclick="window.switchSettingsTab('security')" id="tab-security" class="${currentSettingsTab === 'security' ? 'active' : ''}">Security</button>
+            ${user.role === 'admin' ? `<button onclick="window.switchSettingsTab('admin')" id="tab-admin" class="${currentSettingsTab === 'admin' ? 'active' : ''}">Admin</button>` : ''}
+        </aside>
+        <div id="settings-content" class="settings-content">
+            <!-- Tab Content -->
+        </div>
+    </div>
+    `;
+
+    window.switchSettingsTab = (tab) => {
+        currentSettingsTab = tab;
+        document.querySelectorAll('.settings-sidebar button').forEach(b => b.classList.remove('active'));
+        const btn = document.getElementById(`tab-${tab}`);
+        if (btn) btn.classList.add('active');
+        renderSettingsTabContent();
+    };
+
+    await renderSettingsTabContent();
+};
+
+const renderSettingsTabContent = async () => {
+    const container = document.getElementById('settings-content');
+    if (!container) return;
+    container.innerHTML = '<p style="color: var(--text-muted);">Loading...</p>';
+
+    switch (currentSettingsTab) {
+        case 'general': renderSettingsGeneral(container); break;
+        case 'accounts': await renderSettingsAccounts(container); break;
+        case 'categories': renderSettingsCategories(container); break;
+        case 'data': renderSettingsData(container); break;
+        case 'security': renderSettingsSecurity(container); break;
+        case 'admin': await renderSettingsAdmin(container); break;
+    }
+};
+
+const renderSettingsGeneral = (container) => {
+    container.innerHTML = `
+    <div class="card">
+        <h3>Display Settings</h3>
+        <div style="display: grid; gap: 1.5rem; max-width: 400px;">
+            <label>Currency Symbol
+                <input type="text" value="${currency}" onchange="window.updateSetting('currency', this.value)" placeholder="$">
+            </label>
+            <label>Date Format
+                <select onchange="window.updateSetting('dateFormat', this.value)">
+                    <option value="YYYY-MM-DD" ${dateFormat === 'YYYY-MM-DD' ? 'selected' : ''}>YYYY-MM-DD</option>
+                    <option value="MM/DD/YYYY" ${dateFormat === 'MM/DD/YYYY' ? 'selected' : ''}>MM/DD/YYYY</option>
+                    <option value="DD/MM/YYYY" ${dateFormat === 'DD/MM/YYYY' ? 'selected' : ''}>DD/MM/YYYY</option>
+                </select>
+            </label>
+            <label>Theme
+                <select onchange="window.updateSetting('theme', this.value)">
+                    <option value="tokyo-night" ${theme === 'tokyo-night' ? 'selected' : ''}>Tokyo Night</option>
+                    <option value="light" ${theme === 'light' ? 'selected' : ''}>Light (Coming Soon)</option>
+                </select>
+            </label>
+        </div>
+    </div>
+    `;
+
+    window.updateSetting = (key, value) => {
+        if (key === 'currency') currency = value;
+        if (key === 'dateFormat') dateFormat = value;
+        if (key === 'theme') {
+            theme = value;
+            document.documentElement.setAttribute('data-theme', theme);
+        }
+        saveSettings();
+        // Ideally re-render or apply theme immediately
+        if (key === 'currency' || key === 'dateFormat') {
+            alert('Settings saved. Some changes may require a refresh to take effect.');
+        }
+    };
+};
+
+const renderSettingsAccounts = async (container) => {
     const user = getCurrentUser();
     const transactions = await getAllTransactions(user.uid);
-    const main = document.getElementById('main-content');
 
     // Calculate Net Movement per account
     const movements = {};
@@ -1222,10 +1427,8 @@ const renderAccounts = async () => {
     });
 
     let html = `
-    <header>
-        <h1>Accounts</h1>
-    </header>
     <div class="card">
+        <h3>Manage Accounts</h3>
         <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
             <input type="text" id="new-account-name" placeholder="New Account Name" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
             <button id="btn-add-account" class="btn">Add Account</button>
@@ -1253,15 +1456,15 @@ const renderAccounts = async () => {
             <td>${acc}</td>
             <td>
                 <input type="number" step="0.01" value="${opening}" 
-                    onchange="updateOpeningBalance('${acc}', this.value)"
+                    onchange="window.updateOpeningBalance('${acc}', this.value)"
                     style="width: 100px; padding: 0.25rem;">
             </td>
             <td style="color: ${movement >= 0 ? 'var(--text-success)' : 'var(--text-error)'}">
-                ${movement >= 0 ? '+' : ''}$${movement.toFixed(2)}
+                ${movement >= 0 ? '+' : ''}${currency}${movement.toFixed(2)}
             </td>
-            <td style="font-weight: bold;">$${current.toFixed(2)}</td>
+            <td style="font-weight: bold;">${currency}${current.toFixed(2)}</td>
             <td>
-                <button class="btn-secondary" onclick="deleteAccount('${acc}')" style="color: #ef4444; border-color: #ef4444;">Delete</button>
+                <button class="btn-secondary" onclick="window.deleteAccount('${acc}')" style="color: #ef4444; border-color: #ef4444;">Delete</button>
             </td>
         </tr>
         `;
@@ -1273,15 +1476,14 @@ const renderAccounts = async () => {
     </div>
     `;
 
-    main.innerHTML = html;
+    container.innerHTML = html;
 
-    // Handlers
     document.getElementById('btn-add-account').onclick = () => {
         const name = document.getElementById('new-account-name').value.trim();
         if (name && !accounts.includes(name)) {
             accounts.push(name);
             saveSettings();
-            renderAccounts();
+            renderSettingsTabContent();
         } else if (accounts.includes(name)) {
             alert('Account already exists!');
         }
@@ -1290,7 +1492,7 @@ const renderAccounts = async () => {
     window.updateOpeningBalance = (acc, val) => {
         openingBalances[acc] = parseFloat(val);
         saveSettings();
-        renderAccounts(); // Re-render to update Current Balance
+        renderSettingsTabContent();
     };
 
     window.deleteAccount = (acc) => {
@@ -1298,48 +1500,121 @@ const renderAccounts = async () => {
             accounts = accounts.filter(a => a !== acc);
             delete openingBalances[acc];
             saveSettings();
-            renderAccounts();
+            renderSettingsTabContent();
         }
     };
 };
 
-// --- Settings View ---
-const renderSettings = () => {
-    const main = document.getElementById('main-content');
-
+const renderSettingsCategories = (container) => {
     let html = `
-    <header>
-        <h1>Settings</h1>
-    </header>
     <div class="card">
-        <h3>Manage Categories</h3>
-        <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem;">
-            <input type="text" id="new-category-name" placeholder="New Category Name" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+        <h3>Manage Categories & Budgets</h3>
+        <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" id="new-category-name" placeholder="New Category Name" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; flex: 1; min-width: 200px;">
             <button id="btn-add-category" class="btn">Add Category</button>
         </div>
-        <ul style="list-style: none; padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Category Name</th>
+                    <th>Type</th>
+                    <th>Monthly Budget</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
     `;
 
-    // ... existing settings code ... (truncated in view, but assuming I'm appending after)
-    // Wait, I need to be careful. The previous view_file was truncated.
-    // I should probably read the end of the file first to be safe, or just append if I'm sure.
-    // But I can't append with replace_file_content easily without a target.
-    // Let me read the end of the file first.
-
-
     categories.forEach(cat => {
+        const type = categoryTypes[cat] || 'Expense'; // Default to Expense if undefined
+        const limit = budgetLimits[cat] || '';
+        const isExpense = type === 'Expense';
+
         html += `
-        <li style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee;">
-            <span>${cat}</span>
-            <button class="btn-secondary" onclick="deleteCategory('${cat}')" style="color: #ef4444; border-color: #ef4444; padding: 0.25rem 0.5rem; font-size: 0.8rem;">Delete</button>
-        </li>
+        <tr>
+            <td>${cat}</td>
+            <td>
+                <select onchange="window.updateCategoryType('${cat}', this.value)" style="padding: 0.25rem;">
+                    <option value="Expense" ${type === 'Expense' ? 'selected' : ''}>Expense</option>
+                    <option value="Income" ${type === 'Income' ? 'selected' : ''}>Income</option>
+                    <option value="Transfer" ${type === 'Transfer' ? 'selected' : ''}>Transfer</option>
+                    <option value="Installment" ${type === 'Installment' ? 'selected' : ''}>Installment</option>
+                </select>
+            </td>
+            <td>
+                <input type="number" placeholder="No Limit" value="${limit}" 
+                    onchange="window.updateBudgetLimit('${cat}', this.value)"
+                    style="width: 120px; padding: 0.25rem;"
+                    ${!isExpense ? 'disabled title="Budget limits are only for Expense categories"' : ''}>
+            </td>
+            <td>
+                <button class="btn-secondary" onclick="window.deleteCategory('${cat}')" style="color: #ef4444; border-color: #ef4444; padding: 0.25rem 0.5rem; font-size: 0.8rem;">Delete</button>
+            </td>
+        </tr>
         `;
     });
 
     html += `
-        </ul>
+            </tbody>
+        </table>
     </div>
-    
+    `;
+
+    container.innerHTML = html;
+
+    document.getElementById('btn-add-category').onclick = () => {
+        const name = document.getElementById('new-category-name').value.trim();
+        if (name && !categories.includes(name)) {
+            categories.push(name);
+            // Default type to Expense
+            categoryTypes[name] = 'Expense';
+            saveSettings();
+            renderSettingsTabContent();
+        } else if (categories.includes(name)) {
+            alert('Category already exists!');
+        }
+    };
+
+    window.updateCategoryType = (cat, val) => {
+        categoryTypes[cat] = val;
+        // If changing away from Expense, remove budget limit?
+        // Or just keep it but it won't be active.
+        // Let's re-render to update the disabled state of budget input
+        saveSettings();
+        renderSettingsTabContent();
+    };
+
+    window.updateBudgetLimit = (cat, val) => {
+        if (val === '') {
+            delete budgetLimits[cat];
+        } else {
+            budgetLimits[cat] = parseFloat(val);
+        }
+        saveSettings();
+    };
+
+    window.deleteCategory = (cat) => {
+        if (confirm(`Delete category "${cat}"?`)) {
+            categories = categories.filter(c => c !== cat);
+            delete categoryTypes[cat];
+            delete budgetLimits[cat];
+            saveSettings();
+            renderSettingsTabContent();
+        }
+    };
+};
+
+const renderSettingsData = (container) => {
+    container.innerHTML = `
+    <div class="card">
+        <h3>Data Synchronization</h3>
+        <p style="color: var(--text-muted); margin-bottom: 1rem;">Sync your data with the cloud to access it across devices.</p>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <button id="btn-sync-now" class="btn">Sync Now</button>
+            <span id="sync-status" style="color: var(--text-muted); font-size: 0.9rem;"></span>
+        </div>
+    </div>
+
     <div class="card" style="margin-top: 1.5rem;">
         <h3>Database Maintenance</h3>
         <p style="color: var(--text-muted); margin-bottom: 1rem;">Clean up invalid or corrupted transaction data.</p>
@@ -1351,28 +1626,28 @@ const renderSettings = () => {
     </div>
     `;
 
-    main.innerHTML = html;
+    document.getElementById('btn-sync-now').onclick = async () => {
+        const btn = document.getElementById('btn-sync-now');
+        const status = document.getElementById('sync-status');
+        btn.disabled = true;
+        btn.innerText = 'Syncing...';
 
-    document.getElementById('btn-add-category').onclick = () => {
-        const name = document.getElementById('new-category-name').value.trim();
-        if (name && !categories.includes(name)) {
-            categories.push(name);
-            saveSettings();
-            renderSettings();
-        } else if (categories.includes(name)) {
-            alert('Category already exists!');
+        try {
+            const user = getCurrentUser();
+            await import('./firestore.js').then(m => m.syncData(user.uid));
+            status.innerText = `Last synced: ${new Date().toLocaleTimeString()}`;
+            status.style.color = 'var(--text-success)';
+        } catch (e) {
+            status.innerText = 'Sync failed.';
+            status.style.color = 'var(--text-error)';
+            console.error(e);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Sync Now';
         }
     };
 
-    window.deleteCategory = (cat) => {
-        if (confirm(`Delete category "${cat}"?`)) {
-            categories = categories.filter(c => c !== cat);
-            saveSettings();
-            renderSettings();
-        }
-    };
-
-    // Database cleanup handlers
+    // Database cleanup handlers (reused)
     const statusDiv = document.getElementById('cleanup-status');
 
     document.getElementById('btn-list-invalid').onclick = async () => {
@@ -1415,10 +1690,6 @@ const renderSettings = () => {
                 <p style="color: var(--text-success); font-weight: 600;">✅ Cleanup successful!</p>
                 <p style="color: var(--text-muted); font-size: 0.9rem;">Deleted ${result.deletedCount} from IndexedDB and ${result.firestoreDeletedCount || 0} from Firestore.</p>
             `;
-
-            // Refresh views if needed
-            if (currentView === 'transactions') renderTransactions();
-            if (currentView === 'dashboard') renderDashboard();
         } else if (result.success && result.deletedCount === 0) {
             statusDiv.style.background = 'rgba(158, 206, 106, 0.1)';
             statusDiv.style.border = '1px solid var(--text-success)';
@@ -1435,27 +1706,56 @@ const renderSettings = () => {
     };
 };
 
+const renderSettingsSecurity = (container) => {
+    container.innerHTML = `
+    <div class="card">
+        <h3>Security</h3>
+        <div style="max-width: 400px;">
+            <label>Change Password</label>
+            <input type="password" id="new-password" placeholder="New Password" style="margin-bottom: 1rem;">
+            <input type="password" id="confirm-password" placeholder="Confirm New Password" style="margin-bottom: 1rem;">
+            <button id="btn-change-password" class="btn">Update Password</button>
+            <p id="security-msg" style="margin-top: 1rem; font-size: 0.9rem;"></p>
+        </div>
+    </div>
+    `;
 
+    document.getElementById('btn-change-password').onclick = async () => {
+        const p1 = document.getElementById('new-password').value;
+        const p2 = document.getElementById('confirm-password').value;
+        const msg = document.getElementById('security-msg');
 
-const renderAdmin = async () => {
-    // We need to fetch all users from Firestore, not local DB, to manage roles
-    // But `getAllUsers` in `db.js` is local. 
-    // We need a new function in `firestore.js` to get all users (if allowed by rules).
-    // For now, let's assume we can list users. 
-    // Wait, Firestore client SDK doesn't support "list users" easily without a collection query.
-    // And our rules might block it unless we are admin.
-    // Let's add `getAllUsersFromFirestore` in `firestore.js`.
+        if (p1 !== p2) {
+            msg.innerText = "Passwords do not match.";
+            msg.style.color = "var(--text-error)";
+            return;
+        }
+        if (p1.length < 6) {
+            msg.innerText = "Password must be at least 6 characters.";
+            msg.style.color = "var(--text-error)";
+            return;
+        }
 
-    // Importing dynamically to avoid circular dependency issues if any, or just assume it's available.
-    // Ideally we should import at top.
+        msg.innerText = "Updating...";
+        msg.style.color = "var(--text-muted)";
 
+        const result = await changeUserPassword(p1);
+        if (result.success) {
+            msg.innerText = "Password updated successfully.";
+            msg.style.color = "var(--text-success)";
+            document.getElementById('new-password').value = '';
+            document.getElementById('confirm-password').value = '';
+        } else {
+            msg.innerText = "Error: " + result.error;
+            msg.style.color = "var(--text-error)";
+        }
+    };
+};
+
+const renderSettingsAdmin = async (container) => {
     const users = await getAllUsersFromFirestore();
-    const main = document.getElementById('main-content');
 
     let html = `
-    <header>
-        <h1>Admin Dashboard</h1>
-    </header>
     <div class="card">
         <h3>User Management</h3>
         <table>
@@ -1497,7 +1797,7 @@ const renderAdmin = async () => {
     </div>
     `;
 
-    main.innerHTML = html;
+    container.innerHTML = html;
 
     window.changeUserRole = async (uid, newRole) => {
         if (confirm(`Change role to ${newRole}?`)) {
@@ -1508,13 +1808,12 @@ const renderAdmin = async () => {
                 alert('Failed to update role.');
             }
         } else {
-            renderAdmin(); // Revert selection
+            renderSettingsTabContent(); // Revert selection
         }
     };
 
     window.deleteUserBtn = async (uid) => {
         if (confirm(`Delete user? This cannot be undone.`)) {
-            // await deleteUser(uid); // Need firestore delete
             alert("Delete not implemented yet for safety.");
         }
     };

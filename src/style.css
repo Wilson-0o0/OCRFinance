@@ -459,3 +459,101 @@ tr:last-child td {
         grid-template-columns: 1fr;
     }
 }
+
+/* Settings Layout */
+.settings-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 2rem;
+    height: calc(100vh - 150px);
+    /* Approximate height minus header */
+}
+
+.settings-sidebar {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+}
+
+.settings-sidebar button {
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    color: var(--text-muted);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+.settings-sidebar button:hover {
+    background: var(--bg-hover);
+    color: var(--text-main);
+}
+
+.settings-sidebar button.active {
+    background: rgba(122, 162, 247, 0.15);
+    color: var(--text-accent);
+    font-weight: 600;
+}
+
+.settings-content {
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+/* Responsive Settings */
+@media (max-width: 768px) {
+    .settings-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        height: auto;
+    }
+
+    .settings-sidebar {
+        flex-direction: row;
+        overflow-x: auto;
+        padding: 0.5rem;
+        height: auto;
+    }
+
+    .settings-sidebar button {
+        white-space: nowrap;
+    }
+}
+
+/* Themes */
+[data-theme="light"] {
+    /* Light Theme Palette */
+    --bg-body: #f1f5f9;
+    --bg-card: rgba(255, 255, 255, 0.8);
+    --bg-sidebar: rgba(255, 255, 255, 0.9);
+    --bg-input: #ffffff;
+    --bg-hover: #e2e8f0;
+    --bg-active: #cbd5e1;
+
+    --text-main: #334155;
+    --text-muted: #64748b;
+    --text-accent: #3b82f6;
+    --text-success: #10b981;
+    --text-warning: #f59e0b;
+    --text-error: #ef4444;
+    --text-purple: #8b5cf6;
+
+    --border-color: #cbd5e1;
+    --border-focus: #3b82f6;
+
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --glow-accent: 0 0 15px rgba(59, 130, 246, 0.2);
+
+    color-scheme: light;
+}
