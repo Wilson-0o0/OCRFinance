@@ -635,7 +635,7 @@ const renderReviewForm = async (transactions) => {
             : '';
         const checked = t.isDuplicate ? '' : 'checked';
 
-        const typeOptions = ['Expense', 'Income', 'Transfer'].map(opt =>
+        const typeOptions = ['Expense', 'Income', 'Transfer', 'Installment'].map(opt =>
             `<option value="${opt}" ${opt === (t.type || 'Expense') ? 'selected' : ''}>${opt}</option>`
         ).join('');
 
@@ -671,6 +671,10 @@ const renderReviewForm = async (transactions) => {
                 <label>Date <input type="date" id="date-${index}" value="${t.date || ''}"></label>
                 <label>Amount <input type="number" step="0.01" id="amount-${index}" value="${t.amount || 0}"></label>
                 <label>Merchant <input type="text" id="merchant-${index}" value="${t.merchant || ''}"></label>
+                
+                <label id="lbl-end-date-${index}" style="display: ${t.type === 'Installment' ? 'block' : 'none'};">End Date 
+                    <input type="date" id="end-date-${index}" value="${t.endDate || ''}">
+                </label>
                 
                 <label>Type 
                     <select id="type-${index}" onchange="handleTypeChange(this, ${index})">${typeOptions}</select>
@@ -726,6 +730,10 @@ const renderReviewForm = async (transactions) => {
 
         // Toggle To Account visibility
         lblToAccount.style.display = isTransfer ? 'block' : 'none';
+
+        // Toggle End Date visibility
+        const lblEndDate = document.getElementById(`lbl-end-date-${index}`);
+        if (lblEndDate) lblEndDate.style.display = select.value === 'Installment' ? 'block' : 'none';
 
         // Update Category Options
         const catSelect = document.getElementById(`category-${index}`);
@@ -803,6 +811,10 @@ const renderReviewForm = async (transactions) => {
 
     document.getElementById('btn-save-all').onclick = async () => {
         let savedCount = 0;
+
+        // Fetch all transactions once for budget checking
+        const allTransactions = await getAllTransactions(user.uid);
+
         for (let i = 0; i < transactions.length; i++) {
             const shouldSave = document.getElementById(`save-${i}`).checked;
             if (!shouldSave) continue;
@@ -813,14 +825,48 @@ const renderReviewForm = async (transactions) => {
             const type = document.getElementById(`type-${i}`).value;
             const accountId = document.getElementById(`account-${i}`).value;
             const category = document.getElementById(`category-${i}`).value;
+            const endDate = document.getElementById(`end-date-${i}`).value;
 
             let toAccountId = null;
             if (type === 'Transfer') {
                 toAccountId = document.getElementById(`to-account-${i}`).value;
             }
 
-            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, username: user.uid });
+            // Budget Check
+            if (type === 'Expense' || type === 'Installment') {
+                const limit = budgetLimits[category];
+                if (limit) {
+                    const now = new Date(date);
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+                    let currentSpent = 0;
+                    allTransactions.forEach(t => {
+                        if (t.category === category && (t.type === 'Expense' || t.type === 'Installment')) {
+                            const tDate = new Date(t.date);
+                            if (tDate >= startOfMonth && tDate <= endOfMonth) {
+                                currentSpent += (t.amount ?? 0);
+                            }
+                        }
+                    });
+
+                    // Add amounts from *currently processing* batch to ensure we catch cumulative overages
+                    // We can't easily check "other items in this batch" without a complex loop, 
+                    // but we can at least check against the DB state.
+                    // Ideally we should also add "previously saved items in this loop", but let's keep it simple for now.
+
+                    if (currentSpent + amount > limit) {
+                        const confirmSave = confirm(`⚠️ Budget Alert!\n\nTransaction "${merchant}" will exceed your monthly budget for "${category}".\n\nLimit: ${currency}${limit.toFixed(2)}\nCurrent: ${currency}${currentSpent.toFixed(2)}\nNew Total: ${currency}${(currentSpent + amount).toFixed(2)}\n\nDo you want to proceed?`);
+                        if (!confirmSave) continue;
+                    }
+                }
+            }
+
+            await addTransaction({ date, amount, merchant, type, accountId, toAccountId, category, endDate, username: user.uid });
             savedCount++;
+
+            // Update local list for next iteration's budget check (approximation)
+            allTransactions.push({ date, amount, merchant, type, accountId, category, endDate });
         }
 
         if (savedCount > 0) {
@@ -1418,7 +1464,7 @@ const renderSettingsAccounts = async (container) => {
     transactions.forEach(t => {
         if (t.type === 'Income' && t.accountId) {
             movements[t.accountId] = (movements[t.accountId] || 0) + (t.amount ?? 0);
-        } else if (t.type === 'Expense' && t.accountId) {
+        } else if ((t.type === 'Expense' || t.type === 'Installment') && t.accountId) {
             movements[t.accountId] = (movements[t.accountId] || 0) - (t.amount ?? 0);
         } else if (t.type === 'Transfer') {
             if (t.accountId) movements[t.accountId] = (movements[t.accountId] || 0) - (t.amount ?? 0);
