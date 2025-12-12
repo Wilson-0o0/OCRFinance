@@ -27,6 +27,9 @@
                     <input type="checkbox" id="login-remember">
                     <label for="login-remember">Remember me</label>
                 </div>
+                <div style="text-align: right; margin-bottom: 1rem;">
+                    <a href="#" id="link-forgot-password" style="font-size: 0.9rem;">Forgot Password?</a>
+                </div>
                 <button type="button" id="btn-login" class="btn-primary">Login</button>
                 <p class="footer-text">Don't have an account? <a href="#" id="link-signup">Sign up</a></p>
             </form>
@@ -44,6 +47,17 @@
                 </div>
                 <button type="button" id="btn-signup" class="btn-primary">Sign Up</button>
                 <p class="footer-text">Already have an account? <a href="#" id="link-login">Login</a></p>
+            </form>
+
+            <form id="reset-form" class="card hidden">
+                <h2>Reset Password</h2>
+                <p class="subtitle">Enter your email to receive a reset link</p>
+                <div class="form-group">
+                    <label for="reset-email">Email</label>
+                    <input type="text" id="reset-email" placeholder="Enter your email" required>
+                </div>
+                <button type="button" id="btn-reset" class="btn-primary">Send Reset Link</button>
+                <p class="footer-text"><a href="#" id="link-back-login">Back to Login</a></p>
             </form>
         </div>
     </div>

@@ -1,4 +1,4 @@
-import { login, signup, initAuth, getCurrentUser } from './modules/auth.js';
+import { login, signup, initAuth, getCurrentUser, resetUserPassword } from './modules/auth.js';
 
 // Initialize auth state
 // Initialize auth state and redirect if logged in
@@ -62,5 +62,44 @@ document.getElementById('btn-signup').addEventListener('click', async () => {
         window.location.href = './index.html';
     } catch (err) {
         alert(err.message);
+    }
+});
+
+// Forgot Password & Reset Handlers
+const resetForm = document.getElementById('reset-form');
+const linkForgotPassword = document.getElementById('link-forgot-password');
+const linkBackLogin = document.getElementById('link-back-login');
+
+linkForgotPassword.addEventListener('click', (e) => {
+    e.preventDefault();
+    loginForm.classList.add('hidden');
+    resetForm.classList.remove('hidden');
+});
+
+linkBackLogin.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetForm.classList.add('hidden');
+    loginForm.classList.remove('hidden');
+});
+
+document.getElementById('btn-reset').addEventListener('click', async () => {
+    const email = document.getElementById('reset-email').value;
+
+    if (!email) {
+        alert('Please enter your email');
+        return;
+    }
+
+    try {
+        const result = await resetUserPassword(email);
+        if (result.success) {
+            alert('Password reset link sent to your email!');
+            resetForm.classList.add('hidden');
+            loginForm.classList.remove('hidden');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
     }
 });

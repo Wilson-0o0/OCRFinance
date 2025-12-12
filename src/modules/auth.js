@@ -5,7 +5,8 @@ import {
     signOut,
 
     onAuthStateChanged,
-    updatePassword
+    updatePassword,
+    sendPasswordResetEmail
 } from 'firebase/auth';
 import { syncData, getUserRole, saveUserToFirestore } from './firestore.js';
 
@@ -92,6 +93,16 @@ export const changeUserPassword = async (newPassword) => {
         return { success: false, error: "No user logged in" };
     } catch (error) {
         console.error("Change password error:", error);
+        return { success: false, error: error.message };
+    }
+};
+
+export const resetUserPassword = async (email) => {
+    try {
+        await sendPasswordResetEmail(auth, email);
+        return { success: true };
+    } catch (error) {
+        console.error("Reset password error:", error);
         return { success: false, error: error.message };
     }
 };
