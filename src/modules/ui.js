@@ -28,6 +28,14 @@ let theme = 'tokyo-night';
 let budgetLimits = {}; // { "CategoryName": 500 }
 let categoryTypes = {}; // { "CategoryName": "Expense" }
 
+// Dashboard Widget State
+let dashboardCharts = [
+    { id: 'chart-1', type: 'Category', title: 'Expenses by Category' },
+    { id: 'chart-2', type: 'Time', title: 'Transaction Volume Over Time' }
+];
+let excludedTransactionIds = new Set(); // Set of transaction IDs excluded from analytics
+let transactionFilterMode = 'all'; // 'all', 'excluded-only', 'hide-excluded'
+
 const loadSettings = async () => {
     const user = getCurrentUser();
     if (!user) return;
@@ -46,6 +54,8 @@ const loadSettings = async () => {
         theme = firestoreSettings.theme || theme;
         budgetLimits = firestoreSettings.budgetLimits || budgetLimits;
         categoryTypes = firestoreSettings.categoryTypes || categoryTypes;
+        dashboardCharts = firestoreSettings.dashboardCharts || dashboardCharts;
+        excludedTransactionIds = new Set(firestoreSettings.excludedTransactionIds || []);
 
         // Update local storage to match
         localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
@@ -77,6 +87,12 @@ const loadSettings = async () => {
         const savedTypes = localStorage.getItem(`${prefix}categoryTypes`);
         if (savedTypes) categoryTypes = JSON.parse(savedTypes);
 
+        const savedCharts = localStorage.getItem(`${prefix}dashboardCharts`);
+        if (savedCharts) dashboardCharts = JSON.parse(savedCharts);
+
+        const savedExcluded = localStorage.getItem(`${prefix}excludedTransactionIds`);
+        if (savedExcluded) excludedTransactionIds = new Set(JSON.parse(savedExcluded));
+
         // If we have local data but nothing in Firestore, save to Firestore (Migration)
         if (savedCats || savedAccs || savedBalances) {
             await saveSettings();
@@ -105,7 +121,9 @@ const saveSettings = async () => {
         dateFormat,
         theme,
         budgetLimits,
-        categoryTypes
+        categoryTypes,
+        dashboardCharts,
+        excludedTransactionIds: Array.from(excludedTransactionIds)
     });
 };
 
@@ -211,16 +229,18 @@ const renderView = async () => {
     }
 };
 
+// Helper function to generate unique transaction key
+const getTransactionKey = (t) => {
+    return `${t.date}_${t.merchant}_${t.amount}_${t.type}`;
+};
+
 // --- Dashboard ---
 const renderDashboard = async () => {
     const user = getCurrentUser();
     const transactions = await getAllTransactions(user.uid);
     const main = document.getElementById('main-content');
 
-    // Filter transactions for Dashboard
-    // We need to process Installments specially.
-    // Instead of simple filter, we will generate a list of "effective daily transactions" for the dashboard range.
-
+    // Filter transactions for Dashboard - process Installments and apply date filters
     let processedTransactions = [];
 
     const dashboardStart = dashboardStartDate ? new Date(dashboardStartDate) : null;
@@ -229,24 +249,20 @@ const renderDashboard = async () => {
     transactions.forEach(t => {
         if (t.type === 'Installment') {
             const start = new Date(t.date);
-            const end = t.endDate ? new Date(t.endDate) : new Date(); // Default to today if active
+            const end = t.endDate ? new Date(t.endDate) : new Date();
 
-            // Calculate daily amount
             const diffTime = Math.abs(end - start);
             const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
             const dailyAmount = t.amount / Math.max(1, days);
 
-            // Iterate days
             for (let d = 0; d < days; d++) {
                 const currentDay = new Date(start);
                 currentDay.setDate(start.getDate() + d);
                 const currentDayStr = currentDay.toISOString().split('T')[0];
 
-                // Check if this day is within dashboard filter
                 if (dashboardStart && currentDay < dashboardStart) continue;
                 if (dashboardEnd && currentDay > dashboardEnd) continue;
 
-                // Create a virtual transaction for this day
                 processedTransactions.push({
                     ...t,
                     date: currentDayStr,
@@ -256,21 +272,20 @@ const renderDashboard = async () => {
                 });
             }
         } else {
-            // Normal transaction
             if (dashboardStartDate && t.date < dashboardStartDate) return;
             if (dashboardEndDate && t.date > dashboardEndDate) return;
             processedTransactions.push(t);
         }
     });
 
-    const filteredTransactions = processedTransactions;
+    // Filter out excluded transactions for analytics
+    const includedTransactions = processedTransactions.filter(t => !excludedTransactionIds.has(getTransactionKey(t)));
 
-    // Calculate totals
+    // Calculate totals based on INCLUDED transactions only
     let totalIncome = 0;
     let totalExpense = 0;
 
-    // Calculate totals regardless of view mode
-    filteredTransactions.forEach(t => {
+    includedTransactions.forEach(t => {
         if (t.type === 'Income') {
             totalIncome += (t.amount ?? 0);
         } else if (t.type === 'Expense' || t.type === 'Installment') {
@@ -278,73 +293,12 @@ const renderDashboard = async () => {
         }
     });
 
-    // Calculate Opening Balance Total
     let totalOpening = 0;
     Object.values(openingBalances).forEach(val => totalOpening += (parseFloat(val) || 0));
 
     const netBalance = totalOpening + totalIncome - totalExpense;
 
-    // --- Graph Data Calculation ---
-    let chartData = {};
-    let chartType = 'doughnut';
-    let chartLabel = 'Expenses by Category';
-
-    if (graphViewMode === 'Category') {
-        chartLabel = 'Expenses by Category';
-        chartType = 'doughnut';
-        filteredTransactions.forEach(t => {
-            if (t.type === 'Expense' || t.type === 'Installment') {
-                const cat = t.category || 'Uncategorized';
-                chartData[cat] = (chartData[cat] || 0) + (t.amount ?? 0);
-            }
-        });
-    } else if (graphViewMode === 'Account') {
-        chartLabel = 'Balance Movement by Account';
-        chartType = 'bar';
-        filteredTransactions.forEach(t => {
-            if (t.accountId) {
-                let amount = t.amount ?? 0;
-                if (t.type === 'Expense' || t.type === 'Installment') amount = -amount;
-                if (t.type === 'Transfer' && t.toAccountId) {
-                    // For transfer, we could show net flow, but for simplicity let's just show impact on primary account
-                    amount = -amount;
-                }
-                chartData[t.accountId] = (chartData[t.accountId] || 0) + amount;
-            }
-        });
-    } else if (graphViewMode === 'Merchant') {
-        chartLabel = 'Top Merchants (Expenses)';
-        chartType = 'doughnut';
-        filteredTransactions.forEach(t => {
-            if (t.type === 'Expense' || t.type === 'Installment') {
-                chartData[t.merchant] = (chartData[t.merchant] || 0) + (t.amount ?? 0);
-            }
-        });
-        // Sort and limit to top 10
-        const sorted = Object.entries(chartData).sort((a, b) => b[1] - a[1]).slice(0, 10);
-        chartData = Object.fromEntries(sorted);
-    } else if (graphViewMode === 'Type') {
-        chartLabel = 'Transactions by Type';
-        chartType = 'pie';
-        filteredTransactions.forEach(t => {
-            chartData[t.type] = (chartData[t.type] || 0) + (t.amount ?? 0);
-        });
-    } else if (graphViewMode === 'Time') {
-        chartLabel = 'Transaction Volume Over Time';
-        chartType = 'line';
-        // Group by Date
-        const timeData = {};
-        filteredTransactions.forEach(t => {
-            const date = t.date;
-            timeData[date] = (timeData[date] || 0) + (t.amount ?? 0);
-        });
-        // Sort by date
-        const sortedKeys = Object.keys(timeData).sort((a, b) => new Date(a) - new Date(b));
-        const sortedData = {};
-        sortedKeys.forEach(k => sortedData[k] = timeData[k]);
-        chartData = sortedData;
-    }
-
+    // Render Dashboard HTML
     main.innerHTML = `
         <header>
             <h1>Dashboard</h1>
@@ -365,40 +319,77 @@ const renderDashboard = async () => {
             </div>
         </div>
 
-        <div class="card" style="margin-top: 2rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
-                <h3>${chartLabel}</h3>
-                <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-input); padding: 0.25rem 0.5rem; border-radius: 8px; border: 1px solid var(--border-color);">
-                        <input type="date" value="${dashboardStartDate}" onchange="window.handleDashboardDateChange('start', this.value)" style="border: none; padding: 0.25rem; background: transparent; width: auto; color: var(--text-main);">
-                        <span style="color: var(--text-muted);">to</span>
-                        <input type="date" value="${dashboardEndDate}" onchange="window.handleDashboardDateChange('end', this.value)" style="border: none; padding: 0.25rem; background: transparent; width: auto; color: var(--text-main);">
-                    </div>
-                    <select id="graph-view-select" onchange="window.handleGraphViewChange(this.value)" style="min-width: 150px; width: auto;">
-                        <option value="Category" ${graphViewMode === 'Category' ? 'selected' : ''}>View by Category</option>
-                        <option value="Time" ${graphViewMode === 'Time' ? 'selected' : ''}>View by Time</option>
-                        <option value="Account" ${graphViewMode === 'Account' ? 'selected' : ''}>View by Account</option>
-                        <option value="Merchant" ${graphViewMode === 'Merchant' ? 'selected' : ''}>View by Merchant</option>
-                        <option value="Type" ${graphViewMode === 'Type' ? 'selected' : ''}>View by Type</option>
-                    </select>
+        <div style="margin-top: 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <h3 style="margin: 0;">Analytics</h3>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <input type="date" value="${dashboardStartDate}" onchange="window.handleDashboardDateChange('start', this.value)" style="padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem; width: 140px;">
+                <span style="color: var(--text-muted); font-size: 0.85rem;">to</span>
+                <input type="date" value="${dashboardEndDate}" onchange="window.handleDashboardDateChange('end', this.value)" style="padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem; width: 140px;">
+                <button class="btn-clear" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" onclick="window.clearDashboardDateFilter()">Clear</button>
+            </div>
+        </div>
+
+        <div class="chart-widgets-grid" id="chart-widgets-container">
+            <!-- Chart widgets will be rendered here -->
+        </div>
+
+        <div class="card dashboard-table" style="margin-top: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+                <h3 style="margin: 0;">Transactions</h3>
+                <div class="transaction-filter-controls">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="toggle-all-checkbox" onchange="window.toggleAllTransactions()" style="cursor: pointer;">
+                        <span style="font-size: 0.9rem;">Toggle All</span>
+                    </label>
+                    <button class="filter-btn ${transactionFilterMode === 'all' ? 'active' : ''}" onclick="window.setTransactionFilterMode('all')">Show All</button>
+                    <button class="filter-btn ${transactionFilterMode === 'hide-excluded' ? 'active' : ''}" onclick="window.setTransactionFilterMode('hide-excluded')">Hide Excluded</button>
+                    <button class="filter-btn ${transactionFilterMode === 'excluded-only' ? 'active' : ''}" onclick="window.setTransactionFilterMode('excluded-only')">Show Excluded Only</button>
                 </div>
             </div>
-            <div style="height: 350px; position: relative;">
-                <canvas id="dashboard-chart"></canvas>
+            <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
+                <select id="filter-merchant" onchange="window.applyTransactionFilters()" style="padding: 0.5rem; border-radius: 6px; font-size: 0.85rem; min-width: 150px;">
+                    <option value="">All Merchants</option>
+                </select>
+                <select id="filter-type" onchange="window.applyTransactionFilters()" style="padding: 0.5rem; border-radius: 6px; font-size: 0.85rem; min-width: 130px;">
+                    <option value="">All Types</option>
+                    <option value="Income">Income</option>
+                    <option value="Expense">Expense</option>
+                    <option value="Transfer">Transfer</option>
+                    <option value="Installment">Installment</option>
+                </select>
+                <select id="filter-category" onchange="window.applyTransactionFilters()" style="padding: 0.5rem; border-radius: 6px; font-size: 0.85rem; min-width: 150px;">
+                    <option value="">All Categories</option>
+                </select>
+                <select id="filter-account" onchange="window.applyTransactionFilters()" style="padding: 0.5rem; border-radius: 6px; font-size: 0.85rem; min-width: 150px;">
+                    <option value="">All Accounts</option>
+                </select>
+                <button class="btn-clear" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick="window.clearTransactionFilters()">Clear Filters</button>
+            </div>
+            <div id="transaction-table-container">
+                <!-- Transaction table will be rendered here -->
             </div>
         </div>
     `;
 
-    renderChart(chartData, chartType, chartLabel);
+    // Render chart widgets
+    renderChartWidgets(includedTransactions);
 
-    window.handleGraphViewChange = (mode) => {
-        graphViewMode = mode;
-        renderDashboard();
-    };
+    // Render transaction table
+    renderTransactionTable(processedTransactions);
 
+    // Populate filter dropdowns
+    populateTransactionFilters(processedTransactions);
+
+    // Setup event handlers
     window.handleDashboardDateChange = (type, value) => {
         if (type === 'start') dashboardStartDate = value;
         if (type === 'end') dashboardEndDate = value;
+        renderDashboard();
+    };
+
+    window.clearDashboardDateFilter = () => {
+        dashboardStartDate = '';
+        dashboardEndDate = '';
         renderDashboard();
     };
 };
@@ -448,6 +439,504 @@ const renderChart = (data, type, label) => {
                 }
             } : {}
         }
+    });
+};
+
+// --- Chart Widget Functions ---
+const renderChartWidgets = (transactions) => {
+    const container = document.getElementById('chart-widgets-container');
+    if (!container) return;
+
+    let html = '';
+
+    // Render each chart widget
+    dashboardCharts.forEach(chart => {
+        html += renderChartWidget(chart, transactions);
+    });
+
+    // Add "+" Add Chart card
+    html += `
+        <div class="card add-chart-card" onclick="window.showAddChartModal()">
+            <div class="add-chart-icon">+</div>
+            <div style="color: var(--text-muted); font-weight: 600;">Add Chart</div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+
+    // Render all charts
+    dashboardCharts.forEach(chart => {
+        const chartData = calculateChartData(chart.type, transactions);
+        renderWidgetChart(chart.id, chartData.data, chartData.type, chart.title);
+    });
+};
+
+const renderChartWidget = (chart, transactions) => {
+    return `
+        <div class="card chart-widget">
+            <div class="chart-widget-controls">
+                <button onclick="window.expandChartWidget('${chart.id}')" title="Expand">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0v-4A1.5 1.5 0 0 1 1.5 0h4a.5.5 0 0 1 0 1h-4zM10 .5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 16 1.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5zM.5 10a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 0 14.5v-4a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5z"/>
+                    </svg>
+                </button>
+                <button onclick="window.removeChartWidget('${chart.id}')" title="Remove">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                        <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                    </svg>
+                </button>
+            </div>
+            <h3 style="margin-bottom: 1.5rem;">${chart.title}</h3>
+            <div style="height: 300px; position: relative;">
+                <canvas id="widget-chart-${chart.id}"></canvas>
+            </div>
+        </div>
+    `;
+};
+
+const calculateChartData = (type, transactions) => {
+    let data = {};
+    let chartType = 'doughnut';
+
+    if (type === 'Category') {
+        chartType = 'doughnut';
+        transactions.forEach(t => {
+            if (t.type === 'Expense' || t.type === 'Installment') {
+                const cat = t.category || 'Uncategorized';
+                data[cat] = (data[cat] || 0) + (t.amount ?? 0);
+            }
+        });
+    } else if (type === 'Time') {
+        chartType = 'line';
+        const timeData = {};
+        transactions.forEach(t => {
+            const date = t.date;
+            timeData[date] = (timeData[date] || 0) + (t.amount ?? 0);
+        });
+        const sortedKeys = Object.keys(timeData).sort((a, b) => new Date(a) - new Date(b));
+        sortedKeys.forEach(k => data[k] = timeData[k]);
+    } else if (type === 'Account') {
+        chartType = 'bar';
+        transactions.forEach(t => {
+            if (t.accountId) {
+                let amount = t.amount ?? 0;
+                if (t.type === 'Expense' || t.type === 'Installment') amount = -amount;
+                if (t.type === 'Transfer' && t.toAccountId) amount = -amount;
+                data[t.accountId] = (data[t.accountId] || 0) + amount;
+            }
+        });
+    } else if (type === 'Merchant') {
+        chartType = 'doughnut';
+        transactions.forEach(t => {
+            if (t.type === 'Expense' || t.type === 'Installment') {
+                data[t.merchant] = (data[t.merchant] || 0) + (t.amount ?? 0);
+            }
+        });
+        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        data = Object.fromEntries(sorted);
+    } else if (type === 'Type') {
+        chartType = 'pie';
+        transactions.forEach(t => {
+            data[t.type] = (data[t.type] || 0) + (t.amount ?? 0);
+        });
+    }
+
+    return { data, type: chartType };
+};
+
+const renderWidgetChart = (widgetId, data, type, label) => {
+    const ctx = document.getElementById(`widget-chart-${widgetId}`);
+    if (!ctx) return;
+
+    const chartCtx = ctx.getContext('2d');
+
+    // Destroy existing chart if it exists
+    if (window[`chart_${widgetId}`] instanceof Chart) {
+        window[`chart_${widgetId}`].destroy();
+    }
+
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+
+    const colors = [
+        '#7aa2f7', '#9ece6a', '#e0af68', '#f7768e', '#bb9af7', '#7dcfff', '#ff9e64', '#db4b4b',
+        '#2ac3de', '#73daca', '#b4f9f8', '#c0caf5', '#a9b1d6', '#9aa5ce', '#565f89', '#414868'
+    ];
+
+    window[`chart_${widgetId}`] = new Chart(chartCtx, {
+        type: type,
+        data: {
+            labels: labels,
+            datasets: [{
+                label: label,
+                data: values,
+                backgroundColor: type === 'line' || type === 'bar' ? '#7aa2f7' : colors,
+                borderColor: type === 'line' ? '#7aa2f7' : '#ffffff',
+                borderWidth: 1,
+                fill: type === 'line' ? false : true,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    display: type !== 'bar' && type !== 'line'
+                }
+            },
+            scales: (type === 'bar' || type === 'line') ? {
+                y: {
+                    beginAtZero: true
+                }
+            } : {}
+        }
+    });
+};
+
+// Chart Widget Actions
+window.showAddChartModal = () => {
+    const modal = document.createElement('div');
+    modal.className = 'chart-modal-overlay';
+    modal.innerHTML = `
+        <div class="chart-modal">
+            <h3>Add New Chart</h3>
+            <div class="chart-type-grid">
+                <div class="chart-type-option" onclick="window.addChartWidget('Category')">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem;">📊</div>
+                    <div>Category</div>
+                </div>
+                <div class="chart-type-option" onclick="window.addChartWidget('Time')">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem;">📈</div>
+                    <div>Time</div>
+                </div>
+                <div class="chart-type-option" onclick="window.addChartWidget('Account')">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem;">💰</div>
+                    <div>Account</div>
+                </div>
+                <div class="chart-type-option" onclick="window.addChartWidget('Merchant')">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem;">🏪</div>
+                    <div>Merchant</div>
+                </div>
+                <div class="chart-type-option" onclick="window.addChartWidget('Type')">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔖</div>
+                    <div>Type</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="window.closeAddChartModal()">Cancel</button>
+            </div>
+        </div>
+    `;
+    modal.onclick = (e) => {
+        if (e.target === modal) window.closeAddChartModal();
+    };
+    document.body.appendChild(modal);
+};
+
+window.closeAddChartModal = () => {
+    const modal = document.querySelector('.chart-modal-overlay');
+    if (modal) modal.remove();
+};
+
+window.addChartWidget = (type) => {
+    const titles = {
+        'Category': 'Expenses by Category',
+        'Time': 'Transaction Volume Over Time',
+        'Account': 'Balance Movement by Account',
+        'Merchant': 'Top Merchants',
+        'Type': 'Transactions by Type'
+    };
+
+    const newChart = {
+        id: 'chart-' + Date.now(),
+        type: type,
+        title: titles[type]
+    };
+
+    dashboardCharts.push(newChart);
+    saveSettings();
+    window.closeAddChartModal();
+    renderDashboard();
+};
+
+window.removeChartWidget = (id) => {
+    if (confirm('Remove this chart?')) {
+        dashboardCharts = dashboardCharts.filter(c => c.id !== id);
+        saveSettings();
+        renderDashboard();
+    }
+};
+
+window.expandChartWidget = (id) => {
+    const chart = dashboardCharts.find(c => c.id === id);
+    if (!chart) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fullscreen-chart-overlay';
+    overlay.innerHTML = `
+        <div class="fullscreen-chart-header">
+            <h2>${chart.title}</h2>
+            <button class="btn-close-fullscreen" onclick="window.closeFullscreenChart()">Close</button>
+        </div>
+        <div class="fullscreen-chart-content">
+            <canvas id="fullscreen-chart-canvas"></canvas>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Render chart in fullscreen
+    setTimeout(async () => {
+        const user = getCurrentUser();
+        const transactions = await getAllTransactions(user.uid);
+        const includedTransactions = transactions.filter(t => !excludedTransactionIds.has(t.id));
+        const chartData = calculateChartData(chart.type, includedTransactions);
+
+        const ctx = document.getElementById('fullscreen-chart-canvas').getContext('2d');
+        const labels = Object.keys(chartData.data);
+        const values = Object.values(chartData.data);
+
+        const colors = [
+            '#7aa2f7', '#9ece6a', '#e0af68', '#f7768e', '#bb9af7', '#7dcfff', '#ff9e64', '#db4b4b',
+            '#2ac3de', '#73daca', '#b4f9f8', '#c0caf5', '#a9b1d6', '#9aa5ce', '#565f89', '#414868'
+        ];
+
+        new Chart(ctx, {
+            type: chartData.type,
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: chart.title,
+                    data: values,
+                    backgroundColor: chartData.type === 'line' || chartData.type === 'bar' ? '#7aa2f7' : colors,
+                    borderColor: chartData.type === 'line' ? '#7aa2f7' : '#ffffff',
+                    borderWidth: 1,
+                    fill: chartData.type === 'line' ? false : true,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        display: chartData.type !== 'bar' && chartData.type !== 'line'
+                    }
+                },
+                scales: (chartData.type === 'bar' || chartData.type === 'line') ? {
+                    y: {
+                        beginAtZero: true
+                    }
+                } : {}
+            }
+        });
+    }, 100);
+};
+
+window.closeFullscreenChart = () => {
+    const overlay = document.querySelector('.fullscreen-chart-overlay');
+    if (overlay) overlay.remove();
+};
+
+// --- Transaction Filter Functions ---
+const populateTransactionFilters = (transactions) => {
+    // Get unique values
+    const merchants = [...new Set(transactions.map(t => t.merchant).filter(Boolean))].sort();
+    const categories = [...new Set(transactions.map(t => t.category).filter(Boolean))].sort();
+    const accountIds = [...new Set(transactions.map(t => t.accountId).filter(Boolean))].sort();
+
+    // Populate merchant dropdown
+    const merchantSelect = document.getElementById('filter-merchant');
+    if (merchantSelect) {
+        const currentValue = merchantSelect.value;
+        merchantSelect.innerHTML = '<option value="">All Merchants</option>' +
+            merchants.map(m => `<option value="${m}" ${m === currentValue ? 'selected' : ''}>${m}</option>`).join('');
+    }
+
+    // Populate category dropdown
+    const categorySelect = document.getElementById('filter-category');
+    if (categorySelect) {
+        const currentValue = categorySelect.value;
+        categorySelect.innerHTML = '<option value="">All Categories</option>' +
+            categories.map(c => `<option value="${c}" ${c === currentValue ? 'selected' : ''}>${c}</option>`).join('');
+    }
+
+    // Populate account dropdown
+    const accountSelect = document.getElementById('filter-account');
+    if (accountSelect) {
+        const currentValue = accountSelect.value;
+        accountSelect.innerHTML = '<option value="">All Accounts</option>' +
+            accountIds.map(a => `<option value="${a}" ${a === currentValue ? 'selected' : ''}>${a}</option>`).join('');
+    }
+};
+
+window.applyTransactionFilters = () => {
+    // Get filter values
+    txFilterMerchant = document.getElementById('filter-merchant')?.value || '';
+    txFilterType = document.getElementById('filter-type')?.value || '';
+    txFilterCategory = document.getElementById('filter-category')?.value || '';
+    txFilterAccount = document.getElementById('filter-account')?.value || '';
+
+    // Re-render dashboard to apply filters
+    renderDashboard();
+};
+
+window.clearTransactionFilters = () => {
+    // Reset all filter values
+    txFilterMerchant = '';
+    txFilterType = '';
+    txFilterCategory = '';
+    txFilterAccount = '';
+
+    // Reset dropdown selections
+    const merchantSelect = document.getElementById('filter-merchant');
+    const typeSelect = document.getElementById('filter-type');
+    const categorySelect = document.getElementById('filter-category');
+    const accountSelect = document.getElementById('filter-account');
+
+    if (merchantSelect) merchantSelect.value = '';
+    if (typeSelect) typeSelect.value = '';
+    if (categorySelect) categorySelect.value = '';
+    if (accountSelect) accountSelect.value = '';
+
+    // Re-render dashboard
+    renderDashboard();
+};
+
+// --- Transaction Table Functions ---
+const renderTransactionTable = (transactions) => {
+    const container = document.getElementById('transaction-table-container');
+    if (!container) return;
+
+    // Apply filter mode
+    let filteredTransactions = transactions;
+    if (transactionFilterMode === 'hide-excluded') {
+        filteredTransactions = transactions.filter(t => !excludedTransactionIds.has(getTransactionKey(t)));
+    } else if (transactionFilterMode === 'excluded-only') {
+        filteredTransactions = transactions.filter(t => excludedTransactionIds.has(getTransactionKey(t)));
+    }
+
+    // Apply additional filters
+    if (txFilterMerchant) {
+        filteredTransactions = filteredTransactions.filter(t => t.merchant === txFilterMerchant);
+    }
+    if (txFilterType) {
+        filteredTransactions = filteredTransactions.filter(t => t.type === txFilterType);
+    }
+    if (txFilterCategory) {
+        filteredTransactions = filteredTransactions.filter(t => t.category === txFilterCategory);
+    }
+    if (txFilterAccount) {
+        filteredTransactions = filteredTransactions.filter(t => t.accountId === txFilterAccount);
+    }
+
+    // Sort by date descending
+    filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (filteredTransactions.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 2rem;">No transactions to display</p>';
+        return;
+    }
+
+    let html = `
+        <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>DATE</th>
+                    <th>MERCHANT</th>
+                    <th>TYPE</th>
+                    <th>CATEGORY</th>
+                    <th>ACCOUNT</th>
+                    <th>AMOUNT</th>
+                    <th style="text-align: center;">INCLUDE</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    filteredTransactions.forEach(t => {
+        const txKey = getTransactionKey(t);
+        const isExcluded = excludedTransactionIds.has(txKey);
+        const isChecked = !isExcluded;
+        const rowClass = isExcluded ? 'transaction-row excluded' : 'transaction-row';
+
+        const typeClass = t.type === 'Income' ? 'income' : t.type === 'Expense' ? 'expense' : 'transfer';
+
+        html += `
+            <tr class="${rowClass}">
+                <td>${formatDate(t.date)}</td>
+                <td>${t.merchant || '-'}</td>
+                <td><span class="badge ${typeClass}">${t.type}</span></td>
+                <td>${t.category || '-'}</td>
+                <td>${t.accountId || '-'}</td>
+                <td style="color: ${t.type === 'Expense' || t.type === 'Installment' ? 'var(--text-error)' : 'var(--text-success)'}; font-weight: 600;">${currency}${(t.amount ?? 0).toFixed(2)}</td>
+                <td style="text-align: center;">
+                    <input type="checkbox" class="transaction-checkbox" ${isChecked ? 'checked' : ''} data-tx-key="${txKey}">
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+        </div>
+    `;
+
+    container.innerHTML = html;
+
+    // Setup event listeners for checkboxes
+    setupTransactionCheckboxListeners();
+};
+
+// Transaction Filter Actions
+window.toggleTransactionInclusion = (txKey) => {
+    if (excludedTransactionIds.has(txKey)) {
+        excludedTransactionIds.delete(txKey);
+    } else {
+        excludedTransactionIds.add(txKey);
+    }
+    saveSettings();
+    renderDashboard(); // Re-render to update analytics
+};
+
+window.setTransactionFilterMode = (mode) => {
+    transactionFilterMode = mode;
+    renderDashboard();
+};
+
+window.toggleAllTransactions = () => {
+    const checkbox = document.getElementById('toggle-all-checkbox');
+    const allTransactions = document.querySelectorAll('.transaction-checkbox');
+
+    allTransactions.forEach(cb => {
+        const isChecked = checkbox.checked;
+        cb.checked = isChecked;
+
+        // Get the transaction key from data attribute
+        const txKey = cb.getAttribute('data-tx-key');
+        if (isChecked && excludedTransactionIds.has(txKey)) {
+            excludedTransactionIds.delete(txKey);
+        } else if (!isChecked && !excludedTransactionIds.has(txKey)) {
+            excludedTransactionIds.add(txKey);
+        }
+    });
+
+    saveSettings();
+    renderDashboard();
+};
+
+// Setup event listeners for transaction checkboxes after table renders
+const setupTransactionCheckboxListeners = () => {
+    document.querySelectorAll('.transaction-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const txKey = e.target.getAttribute('data-tx-key');
+            window.toggleTransactionInclusion(txKey);
+        });
     });
 };
 
