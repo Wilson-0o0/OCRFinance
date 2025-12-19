@@ -234,6 +234,14 @@ const getTransactionKey = (t) => {
     return `${t.date}_${t.merchant}_${t.amount}_${t.type}`;
 };
 
+const getCategoriesForType = (type) => {
+    return categories.filter(c => {
+        const cType = categoryTypes[c] || 'Expense'; // Default to Expense
+        if (type === 'Installment') return cType === 'Expense' || cType === 'Installment';
+        return cType === type;
+    });
+};
+
 // --- Dashboard ---
 const renderDashboard = async () => {
     const user = getCurrentUser();
@@ -1134,12 +1142,7 @@ const renderReviewForm = async (transactions) => {
 
         const currentType = t.type || 'Expense';
 
-        const filteredCats = categories.filter(c => {
-            const cType = categoryTypes[c];
-            if (!cType) return true;
-            if (currentType === 'Installment') return cType === 'Expense' || cType === 'Installment';
-            return cType === currentType;
-        });
+        const filteredCats = getCategoriesForType(currentType);
 
         const categoryOptions = filteredCats.map(opt =>
             `<option value="${opt}" ${opt === (t.category || 'Uncategorized') ? 'selected' : ''}>${opt}</option>`
@@ -1229,12 +1232,7 @@ const renderReviewForm = async (transactions) => {
         const currentVal = catSelect.value;
         const type = select.value;
 
-        const filteredCats = categories.filter(c => {
-            const cType = categoryTypes[c];
-            if (!cType) return true;
-            if (type === 'Installment') return cType === 'Expense' || cType === 'Installment';
-            return cType === type;
-        });
+        const filteredCats = getCategoriesForType(type);
 
         catSelect.innerHTML = filteredCats.map(opt => `<option value="${opt}">${opt}</option>`).join('') + '<option value="__NEW__">+ Add Category</option>';
 
@@ -1279,16 +1277,44 @@ const renderReviewForm = async (transactions) => {
             const newName = prompt("Enter new category name:");
             if (newName && !categories.includes(newName)) {
                 categories.push(newName);
+
+                // Get current type for this row to assign to the new category
+                const typeSelect = document.getElementById(`type-${index}`);
+                const currentType = typeSelect ? typeSelect.value : 'Expense';
+
+                // Determine effective type (Installment -> Expense)
+                const effectiveType = currentType === 'Installment' ? 'Expense' : currentType;
+                categoryTypes[newName] = effectiveType;
+
                 saveSettings();
+
                 // Refresh all category dropdowns
                 document.querySelectorAll(`[id^="category-"]`).forEach(el => {
                     const currentVal = el.value === '__NEW__' ? newName : el.value;
-                    el.innerHTML = categories.map(opt => `<option value="${opt}">${opt}</option>`).join('') + '<option value="__NEW__">+ Add Category</option>';
-                    el.value = currentVal;
+                    const rowIdx = el.id.split('-')[1];
+                    const rowType = document.getElementById(`type-${rowIdx}`)?.value || 'Expense';
+
+                    // Filter again based on the row's type
+                    const filtered = getCategoriesForType(rowType);
+
+                    el.innerHTML = filtered.map(opt => `<option value="${opt}">${opt}</option>`).join('') + '<option value="__NEW__">+ Add Category</option>';
+
+                    // Restore selection if valid, else default
+                    if (filtered.includes(currentVal)) {
+                        el.value = currentVal;
+                    } else if (filtered.length > 0) {
+                        el.value = filtered[0];
+                    }
                 });
+
+                // Set the current select to the new name
                 select.value = newName;
             } else {
-                select.value = 'Uncategorized'; // Revert
+                // Revert if cancelled or duplicate
+                const typeSelect = document.getElementById(`type-${index}`);
+                const rowType = typeSelect ? typeSelect.value : 'Expense';
+                const filtered = getCategoriesForType(rowType);
+                if (filtered.length > 0) select.value = filtered[0];
             }
         }
     };
@@ -1483,7 +1509,7 @@ const renderTransactions = async () => {
             </label>
 
             <label>Category 
-                <select id="new-category">${categoryOptions}</select>
+                <select id="new-category" onchange="window.handleManualCategoryChange(this)">${categoryOptions}</select>
             </label>
         </div>
         <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: flex-end;">
@@ -1613,18 +1639,39 @@ const renderTransactions = async () => {
         const catSelect = document.getElementById('new-category');
         const currentVal = catSelect.value;
 
-        const filteredCats = categories.filter(c => {
-            const cType = categoryTypes[c] || 'Expense'; // Default to Expense
-            if (type === 'Installment') return cType === 'Expense' || cType === 'Installment';
-            return cType === type;
-        });
+        const filteredCats = getCategoriesForType(type);
 
-        catSelect.innerHTML = filteredCats.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+        catSelect.innerHTML = filteredCats.map(opt => `<option value="${opt}">${opt}</option>`).join('') + '<option value="__NEW__">+ Add Category</option>';
 
         if (filteredCats.includes(currentVal)) {
             catSelect.value = currentVal;
         } else if (filteredCats.length > 0) {
             catSelect.value = filteredCats[0];
+        }
+    };
+
+    window.handleManualCategoryChange = (select) => {
+        if (select.value === '__NEW__') {
+            const newName = prompt("Enter new category name:");
+            if (newName && !categories.includes(newName)) {
+                categories.push(newName);
+
+                // Get current transaction type
+                const currentType = document.getElementById('new-type').value;
+                const effectiveType = currentType === 'Installment' ? 'Expense' : currentType;
+                categoryTypes[newName] = effectiveType;
+
+                saveSettings();
+
+                // Refresh options
+                window.updateCategoryOptions(currentType);
+
+                select.value = newName;
+            } else {
+                // Revert
+                const currentType = document.getElementById('new-type').value;
+                window.updateCategoryOptions(currentType);
+            }
         }
     };
 
