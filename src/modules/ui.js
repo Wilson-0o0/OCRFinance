@@ -167,7 +167,9 @@ export const renderApp = async () => {
         <button id="nav-transactions">Transactions</button>
         <button id="nav-installments">Installments</button>
         <button id="nav-settings">Settings</button>
-        <button id="nav-logout" style="margin-top: auto; border-top: 1px solid #334155;">Logout</button>
+        <button id="nav-guide" style="margin-top: auto;">User Guide</button>
+        <button id="nav-patch-notes">Patch Notes</button>
+        <button id="nav-logout" style="border-top: 1px solid #334155;">Logout</button>
       </nav>
     </aside>
     <main id="main-content">
@@ -195,10 +197,176 @@ const setupNavigation = () => {
         }
     });
 
+    document.getElementById('nav-guide').addEventListener('click', toggleUserGuide);
+    document.getElementById('nav-patch-notes').addEventListener('click', togglePatchNotes);
+
     document.getElementById('nav-logout').addEventListener('click', () => {
         logout();
         window.location.href = './login.html';
     });
+};
+
+const toggleUserGuide = () => {
+    let guideWindow = document.getElementById('user-guide-window');
+
+    if (guideWindow) {
+        // Toggle visibility
+        if (guideWindow.style.display === 'none') {
+            guideWindow.style.display = 'flex';
+        } else {
+            guideWindow.style.display = 'none';
+        }
+        return;
+    }
+
+    // Create the window
+    guideWindow = document.createElement('div');
+    guideWindow.id = 'user-guide-window';
+    guideWindow.className = 'floating-window'; // Generic class
+    guideWindow.style.display = 'flex';
+
+    guideWindow.innerHTML = `
+        <div class="floating-window-header" id="user-guide-header">
+            <h3>User Guide</h3>
+            <button class="btn-close-window" onclick="document.getElementById('user-guide-window').style.display='none'">×</button>
+        </div>
+        <div class="floating-window-content">
+            <h4>Welcome to OCR Financial Manager</h4>
+            <p>This application helps you track your finances by scanning receipts and managing transactions.</p>
+            
+            <hr>
+            
+            <h4>🚀 Getting Started</h4>
+            <ul>
+                <li><strong>Dashboard:</strong> View your net balance, total income/expenses, and analytics.</li>
+                <li><strong>Upload & Scan:</strong> Upload receipt images to automatically extract transaction details.</li>
+                <li><strong>Transactions:</strong> View, filter, and edit your transaction history.</li>
+                <li><strong>Installments:</strong> specific tracking for installment-based payments.</li>
+            </ul>
+
+            <hr>
+
+            <h4>🧾 How to Scan Receipts</h4>
+            <div style="background: rgba(122, 162, 247, 0.1); border-left: 3px solid #7aa2f7; padding: 0.8rem; margin-bottom: 1rem; border-radius: 4px; font-size: 0.85rem;">
+                <strong>Supported Formats:</strong> TnG transaction history and M2U web/mobile view.<br>
+                <strong>Tip:</strong> For best results, crop the image to show only the transaction details before uploading.
+            </div>
+            <ol>
+                <li>Go to "Upload & Scan" tab.</li>
+                <li>Paste an image or select a file.</li>
+                <li>Wait for the OCR to process the text.</li>
+                <li>Review the extracted Date, Merchant, and Amount.</li>
+                <li>Select a Category and Account.</li>
+                <li>Click "Save Transaction".</li>
+            </ol>
+            
+            <hr>
+
+            <h4>📊 Tips</h4>
+            <ul>
+                <li>Use the <strong>Settings</strong> to customize categories and accounts.</li>
+                <li>Transactions are saved locally (offline) and synced to the cloud when online.</li>
+            </ul>
+        </div>
+    `;
+
+    document.body.appendChild(guideWindow);
+    makeDraggable(document.getElementById('user-guide-window'), document.getElementById('user-guide-header'));
+};
+
+const togglePatchNotes = () => {
+    let patchWindow = document.getElementById('patch-notes-window');
+
+    if (patchWindow) {
+        if (patchWindow.style.display === 'none') {
+            patchWindow.style.display = 'flex';
+        } else {
+            patchWindow.style.display = 'none';
+        }
+        return;
+    }
+
+    // Create the window
+    patchWindow = document.createElement('div');
+    patchWindow.id = 'patch-notes-window';
+    patchWindow.className = 'floating-window'; // Generic class
+    patchWindow.style.display = 'flex';
+    // Offset slightly from user guide so they don't exactly overlap if both open
+    patchWindow.style.top = '150px';
+    patchWindow.style.right = '60px';
+
+    patchWindow.innerHTML = `
+        <div class="floating-window-header" id="patch-notes-header">
+            <h3>Patch Notes v0.2.1</h3>
+            <button class="btn-close-window" onclick="document.getElementById('patch-notes-window').style.display='none'">×</button>
+        </div>
+        <div class="floating-window-content">
+            <h4>✨ New Features</h4>
+            <ul>
+                <li>
+                    <strong>Floating User Guide:</strong> 
+                    Added a comprehensive user guide accessible from the sidebar. The window is floating, draggable, and resizable.
+                </li>
+                <li>
+                    <strong>Patch Notes:</strong> 
+                    You are reading it! View the latest updates directly in the app.
+                </li>
+            </ul>
+
+            <hr>
+
+            <h4>🛠️ Improvements</h4>
+            <ul>
+                <li>
+                    <strong>UI/UX:</strong> 
+                    Updated sidebar navigation layout.
+                </li>
+                <li>
+                    <strong>Documentation:</strong> 
+                    Added specific instructions for scanning TnG and M2U receipts.
+                </li>
+            </ul>
+        </div>
+    `;
+
+    document.body.appendChild(patchWindow);
+    makeDraggable(document.getElementById('patch-notes-window'), document.getElementById('patch-notes-header'));
+};
+
+const makeDraggable = (element, handle) => {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+    handle.onmousedown = dragMouseDown;
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        e.preventDefault();
+        // get the mouse cursor position at startup:
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        // call a function whenever the cursor moves:
+        document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        // calculate the new cursor position:
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        // set the element's new position:
+        element.style.top = (element.offsetTop - pos2) + "px";
+        element.style.left = (element.offsetLeft - pos1) + "px";
+    }
+
+    function closeDragElement() {
+        // stop moving when mouse button is released:
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
 };
 
 const updateActiveNav = () => {

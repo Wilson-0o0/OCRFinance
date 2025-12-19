@@ -141,6 +141,23 @@ nav button.active {
     border-radius: 4px 12px 12px 4px;
 }
 
+/* Highlighted Nav Buttons */
+#nav-guide,
+#nav-patch-notes {
+    margin-top: 0.5rem;
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    background: rgba(122, 162, 247, 0.05);
+    color: var(--text-accent);
+}
+
+#nav-guide:hover,
+#nav-patch-notes:hover {
+    background: rgba(122, 162, 247, 0.15);
+    border-color: var(--text-accent);
+    transform: translateX(4px);
+    box-shadow: 0 0 15px rgba(122, 162, 247, 0.1);
+}
+
 /* Main Content */
 main {
     padding: 2.5rem 3rem;
@@ -896,4 +913,113 @@ tr:last-child td {
     --glow-accent: 0 0 15px rgba(59, 130, 246, 0.2);
 
     color-scheme: light;
+}
+
+/* Floating Window (Generic) */
+.floating-window {
+    position: fixed;
+    top: 100px;
+    right: 30px;
+    width: 400px;
+    max-height: 80vh;
+    background: rgba(26, 27, 38, 0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(122, 162, 247, 0.2);
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: none;
+    /* Hidden by default */
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--text-main);
+    animation: fadeIn 0.3s ease-out;
+
+    /* Resizable properties */
+    resize: both;
+    min-width: 300px;
+    min-height: 400px;
+    max-width: 90vw;
+    max-height: 90vh;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.floating-window-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    background: rgba(122, 162, 247, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: move;
+    /* Indicates draggable */
+    user-select: none;
+    flex-shrink: 0;
+    /* Prevent header from shrinking */
+}
+
+.floating-window-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--text-accent);
+    font-weight: 600;
+}
+
+.btn-close-window {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.2s;
+}
+
+.btn-close-window:hover {
+    color: var(--text-error);
+}
+
+.floating-window-content {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+    /* Take up remaining space */
+}
+
+.floating-window-content h4 {
+    color: var(--text-accent);
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+
+.floating-window-content p,
+.floating-window-content li {
+    font-size: 0.9rem;
+    color: var(--text-main);
+    line-height: 1.6;
+}
+
+.floating-window-content ul,
+.floating-window-content ol {
+    padding-left: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.floating-window-content hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 1.5rem 0;
 }
